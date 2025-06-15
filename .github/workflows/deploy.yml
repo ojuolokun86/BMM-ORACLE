@@ -21,6 +21,7 @@ jobs:
         script: |
           cd /home/ubuntu/your-repo-folder
           git pull origin main
-          pm2 restart your-app-name
+          npm install
+          pm2 restart BMM || pm2 start src/index.js --name BMM
 
         

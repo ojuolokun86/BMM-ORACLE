@@ -213,7 +213,30 @@ const loadAllSessionsFromSupabase = async () => {
     }
 };
 
+/**
+ * Check if a session exists in Supabase for a given phone number (on this server).
+ * @returns {boolean}
+ */
+const sessionExistsInDB = async (phoneNumber) => {
+    try {
+        const { data, error } = await supabase
+            .from('sessions')
+            .select('phoneNumber')
+            .eq('phoneNumber', phoneNumber)
+            .eq('server_id', SERVER_ID)
+            .single();
+        if (error && error.code !== 'PGRST116') {
+            throw new Error(error.message);
+        }
+        return !!data;
+    } catch (error) {
+        console.error(`❌ Error checking session existence for ${phoneNumber}:`, error.message);
+        return false;
+    }
+};
+
 module.exports = {
+    sessionExistsInDB,
     saveSessionToSupabase,
     loadSessionFromSupabase,
     deleteSessionFromSupabase,

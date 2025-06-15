@@ -276,7 +276,7 @@ return;
 
 
 // robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\VPS\M-BOT" /E /XD public /XF .env
-
 // robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\kali share railway\M-BOT" /E /XD public /XF .env
 // robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\kali share fly.io\M-BOT" /E /XD public /XF .env
 // robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\kali share render\M-BOT" /E /XD public /XF .env
+// robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\ORACLE\M-BOT" /E /XD public

@@ -56,9 +56,9 @@ const initializeSocket = (server) => {
             delete botInstances[phoneNumber];
         }
         // Start a new session (this will emit a new pairing code)
-        const { startNewSession } = require('../users/userSession');
+        const { registerUser } = require('../users/registrationManager');
         console.log(`📞 Starting new session for phone: ${phoneNumber}, authId: ${authId} pairingMethod: ${pairingMethod}`);
-        await startNewSession(phoneNumber, io, authId, pairingMethod);
+        await registerUser(phoneNumber, io, authId, pairingMethod);
     });
     socket.on('authId', (authId) => {
       authId = String(authId);

@@ -1,10 +1,10 @@
-//console.log = function () {};
+console.log = function () {};
 // Suppress console logs in production
 // if (process.env.NODE_ENV === 'production') {
 //     console.log = function () {};
 // }
 const events = require('events');
-events.EventEmitter.defaultMaxListeners = 50;
+events.EventEmitter.defaultMaxListeners = 60;
 console.log('🔧 Increased default max listeners to 50 for EventEmitter');
 const express = require('express');
 require('dotenv').config();
@@ -119,13 +119,13 @@ const createServer = () => {
 
     // Continue with registration...
     try {
-        console.log('🚦 [start-session] Calling startNewSession...');
-        const { startNewSession,} = require('../users/userSession');
-        await startNewSession(phoneNumber, io, authId, pairingMethod,);
+        console.log('🚦 [start-session] Calling registerUser...');
+        const { registerUser,} = require('../users/registrationManager');
+        await registerUser(phoneNumber, io, authId, pairingMethod);
         console.log('✅ [start-session] Session started successfully.');
         return res.status(200).json({ message: 'Session started. Please scan the QR code.' });
     } catch (err) {
-        console.error('❌ [start-session] Error in startNewSession:', err);
+        console.error('❌ [start-session] Error in registerUser:', err);
         return res.status(500).json({ error: 'Failed to start session.', details: err.message });
     }
 });
@@ -170,13 +170,7 @@ const createServer = () => {
   res.json({ bots });
 });
 
-function emitAnalyticsUpdate(authId) {
-    const socketId = userSockets.get(authId);
-    if (socketId && io) {
-        const analytics = getAnalyticsData(authId);
-        io.to(socketId).emit('analytics-update', analytics);
-    }
-}
+
   app.post('/api/admin/reload-sessions', async (req, res) => {
   try {
     await loadAllSessionsFromSupabase();

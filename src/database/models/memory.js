@@ -29,6 +29,11 @@ const getSessionFromMemory = (phoneNumber) => {
  */
 const saveSessionToMemory = (phoneNumber, sessionData, authId) => {
 
+     if (globalStore.deletedUsers && globalStore.deletedUsers[phoneNumber]) {
+        console.warn(`⚠️ Not saving session for deleted user: ${phoneNumber}`);
+        return;
+    }
+
     // Prevent overwriting existing authId with undefined
     const existing = memoryStore.get(phoneNumber);
     if (existing && !authId && existing.authId) {

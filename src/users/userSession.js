@@ -13,45 +13,67 @@ const { fetchWhatsAppWebVersion } = require('../utils/AppWebVersion'); // Import
 const { listSessionsFromSupabase } = require('../database/models/supabaseAuthState'); // Import the function to list sessions from Supabase
 const QRCode = require('qrcode'); // Add this at the top of your file
 const { getSocketInstance, userSockets } = require('../server/socket');
+const { sessionExistsInDB } = require('../database/models/supabaseAuthState');
 
 const sessionTimers = {};
 const cancelledSessions = new Set();
 
 async function fullyStopSession(phoneNumber) {
     console.log(`🛑 Fully stopping session for ${phoneNumber}`);
-    // Clear all timeouts/intervals
+
+    // Cancel any intervals or timeouts
     if (sessionTimers[phoneNumber]) {
-        sessionTimers[phoneNumber].forEach(clearInterval);
+        sessionTimers[phoneNumber].forEach(clearInterval); // or clearTimeout, if used
         delete sessionTimers[phoneNumber];
         cancelledSessions.add(phoneNumber);
         console.log(`⏹️ All timers cleared for ${phoneNumber}`);
     } else {
         console.log(`ℹ️ No timers found for ${phoneNumber}`);
     }
-    // Remove event listeners and close socket
+
+    // Stop bot instance if exists
     if (botInstances[phoneNumber]) {
         console.log(`🔌 Closing socket for ${phoneNumber}`);
         try {
             const sock = botInstances[phoneNumber].sock;
+
+            // 1. Remove event listeners
+            if (sock?.ev) sock.ev.removeAllListeners();
+
+            // 2. End WebSocket
             if (sock?.ws) {
-                sock.ev.removeAllListeners();
-                if (typeof sock.ws.terminate === 'function') {
-                    sock.ws.terminate();
-                    console.log(`✅ Socket for ${phoneNumber} terminated immediately.`);
-                } else {
-                    await sock.ws.close();
-                    console.log(`✅ Socket for ${phoneNumber} closed gracefully.`);
+                try {
+                    await sock.ws.close(); // try graceful close
+                    sock.ws.terminate?.(); // force kill if possible
+                    console.log(`✅ WebSocket closed for ${phoneNumber}`);
+                } catch (e) {
+                    console.warn(`⚠️ Error closing WebSocket:`, e.message);
                 }
             }
+
+            // 3. Clean connection
+            if (sock?.end) {
+                await sock.end(new Error("Manual session stop")); // Baileys v6+ graceful end
+                console.log(`🧹 Socket end() called for ${phoneNumber}`);
+            }
+
+            // 4. Clear any reconnect timers Baileys may have
+            if (sock?.reconnectTimeout) {
+                clearTimeout(sock.reconnectTimeout);
+                console.log(`⏹️ Reconnect timeout cleared for ${phoneNumber}`);
+            }
         } catch (err) {
-            console.warn(`⚠️ Error closing socket for ${phoneNumber}:`, err.message);
+            console.warn(`⚠️ Error stopping bot instance:`, err.message);
         }
+
+        // Finally, delete the instance
         delete botInstances[phoneNumber];
-        console.log(`🗑️ Bot instance for ${phoneNumber} deleted.`);
+        console.log(`🗑️ Bot instance deleted for ${phoneNumber}`);
     } else {
         console.log(`ℹ️ No bot instance found for ${phoneNumber}`);
     }
 }
+
 
 
 
@@ -63,6 +85,7 @@ const { platform } = require('os');
  * @param {string} phoneNumber - The user's phone number.
  */
 const saveUserInfo = async (sock, phoneNumber, authId, platform) => {
+    const userId = phoneNumber; // Define userId explicitly
     try {
         if (!sock.user) {
             console.error(`❌ No user information available for phone number: ${phoneNumber}`);
@@ -81,7 +104,7 @@ const saveUserInfo = async (sock, phoneNumber, authId, platform) => {
             - Platform: ${platform}
         `);
 
-        const userId = phoneNumber; // Define userId explicitly
+        
         // Call the addUser function to save the user info to the database
         await addUser(userId, name, lid, id, dateCreated, authId, platform);
 
@@ -113,7 +136,11 @@ const startNewSession = async (phoneNumber, io, authId, pairingMethod) => {
     }
 
     if (botInstances[phoneNumber]) {
-        try { if (botInstances[phoneNumber].sock?.ws) await botInstances[phoneNumber].sock.ws.close(); } catch {}
+        try {
+            if (botInstances[phoneNumber].sock?.ws) {
+                await botInstances[phoneNumber].sock.ws.close();
+            }
+        } catch {}
         delete botInstances[phoneNumber];
     }
     const  version  = await fetchWhatsAppWebVersion();
@@ -145,89 +172,16 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
     sock.ev.on('creds.update', saveCreds);
     console.log(`🚀creds update`)
     console.info("📦 Loaded state:", state?.creds?.registered);
+
+
     // Connection Updates
     sock.ev.on('connection.update', async (update) => {
-        if (cancelledSessions.has(phoneNumber)) {
-        console.log(`⏹️ Ignoring event for cancelled session ${phoneNumber}`);
-        return;
-    }
         lastEventTime = Date.now(); // Update last event time on any connection update
         const { connection, lastDisconnect, qr } = update;
         console.log(`📶 Connection update for ${phoneNumber}:`, connection, update);
-
-        // 1️⃣ Request pairing code when qr is present and not already requested
-        if (!sock.authState.creds.registered && qr && !pairingRequestedMap.get(phoneNumber)) {
-         pairingRequestedMap.set(phoneNumber, true);
-
-    // Increment pairing attempts
-            const attempts = (pairingAttemptsMap.get(phoneNumber) || 0) + 1;
-            pairingAttemptsMap.set(phoneNumber, attempts);
-
-            if (attempts > MAX_PAIRING_ATTEMPTS) {
-                console.warn(`❌ Max pairing attempts reached for ${phoneNumber}. Deleting session and not reconnecting.`);
-                await fullyStopSession(phoneNumber);
-                await deleteUserData(phoneNumber);
-                sendQrToLm({
-                    authId,
-                    phoneNumber,
-                    status: 'failure',
-                    message: '❌ Max pairing attempts reached. Please redeploy the bot to try again.',
-                    needsRescan: true,
-                });
-                return; // Do not continue or retry
-            }
-    
-        try {
-            if (pairingMethod === 'pairingCode') {
-                // Only request pairing code if user chose it
-                const pairingCode = await sock.requestPairingCode(phoneNumber);
-                const formattedCode = pairingCode.match(/.{1,4}/g).join('-');
-                console.info(`🎉 Pairing code for ${phoneNumber}: ${formattedCode}`);
-                sendQrToLm({ authId, phoneNumber, pairingCode: formattedCode });
-            } else if (pairingMethod === 'qrCode') {
-                // Only send QR if user chose QR
-                console.info(`📱 QR code for ${phoneNumber} sent`);
-                sendQrToLm({ authId, phoneNumber, qr });
-           } else {
-                console.error(`❌ Invalid pairing method: ${pairingMethod}`);
-                // Clean up any partial session
-                await fullyStopSession(phoneNumber);
-                await deleteUserData(phoneNumber);
-                sendQrToLm({
-                    authId,
-                    phoneNumber,
-                    status: 'failure',
-                    message: '❌ Invalid pairing method. Please try again with a valid method.',
-                    needsRescan: true,
-                });
-                return; // Stop further execution
-            }
-            pairingTimeout = setTimeout(() => {
-                pairingRequested = false;
-                try { sock.ws.close(); } catch {}
-            }, PAIRING_WINDOW);
-        } catch (err) {
-            console.error('❌ Pairing code/QR generation failed:', err);
-            pairingRequested = false;
-            sendQrToLm({
-                authId,
-                phoneNumber,
-                status: 'failure',
-                message: '❌ Failed to generate pairing code/QR. Please try again.',
-                needsRescan: true,
-            });
-        }
-    }
-
         // 2️⃣ On successful connection
       if (connection === 'open') {
-        // 1️⃣ Clear pairing timeout if set
-        if (pairingTimeout) {
-            clearTimeout(pairingTimeout);
-            pairingTimeout = null;
-        }
-        pairingRequested = false;
-
+     
         // 2️⃣ Mark as connected and store bot instance
         console.log(`✅ Connected for ${phoneNumber}`);
         botInstances[phoneNumber] = { sock, authId };
@@ -291,21 +245,13 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
             }
             delete restartQueue[phoneNumber];
         }
-
-        // 7️⃣ Emit registration status to frontend/LM
-        if (io) {
-            io.to(String(authId)).emit('registration-status', {
-                phoneNumber,
-                status: 'success',
-                message: '✅ Bot connected!',
-            });
-        }
     }
 
    if (connection === 'close') {
     const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
     const reasonName = Object.entries(DisconnectReason).find(([k, v]) => v === reason)?.[0] || reason;
     console.warn(`⚠️ Connection closed for ${phoneNumber}: ${reason} (${reasonName})`);
+
 
     // 🟢 If this was an intentional restart, do nothing!
     if (intentionalRestarts.has(phoneNumber)) {
@@ -330,46 +276,6 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
         return;
     }
 
-    // If registration is NOT complete (user not paired yet)
-    if (!sock.authState.creds.registered) {
-        pairingRequested = false;
-        if (pairingTimeout) {
-            clearTimeout(pairingTimeout);
-            pairingTimeout = null;
-        }
-
-        // --- QR code: if restart/timeout/lost, just retry quietly ---
-        if (
-            pairingMethod === 'qrCode' &&
-            [DisconnectReason.restartRequired, DisconnectReason.connectionLost, DisconnectReason.timedOut, 428, DisconnectReason.unavailableService, DisconnectReason.unknown].includes(reason)
-        ) {
-            console.warn(`🔄 [QR] Restarting session for ${phoneNumber} after connection close (${reason})`);
-            setTimeout(() => startNewSession(phoneNumber, io, authId, pairingMethod), 2000);
-            return;
-        }
-
-        // --- Pairing code or other QR failures: cleanup and notify ---
-       else if (
-            pairingMethod === 'pairingCode' ||
-            ![DisconnectReason.restartRequired, DisconnectReason.connectionLost, DisconnectReason.timedOut, 428, DisconnectReason.unavailableService, DisconnectReason.unknown].includes(reason)
-        ) {
-            if (botInstances[phoneNumber]) {
-                try { await botInstances[phoneNumber].sock.ws.close(); } catch {}
-                delete botInstances[phoneNumber];
-            }
-            await deleteUserData(phoneNumber);
-            console.warn(`❌ Pairing failed or expired for ${phoneNumber}. User data deleted.`);
-            sendQrToLm({
-                authId,
-                phoneNumber,
-                status: 'failure',
-                message: '❌ Pairing failed or expired. Please redeploy the bot to get a new code.',
-                needsRescan: true,
-            });
-            return;
-        }
-    }
-
     // --- If registration WAS complete, handle normal disconnects ---
     switch (reason) {
         case DisconnectReason.restartRequired:
@@ -389,6 +295,7 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
         case DisconnectReason.loggedOut:
         case DisconnectReason.Failure:
         case 405: // Custom code for "bad session"
+            await fullyStopSession(phoneNumber);
             await deleteUserData(phoneNumber);
             sendQrToLm({
                 authId,
@@ -431,6 +338,11 @@ sock.ev.on('iq', async iq => {
 
                 // Save updated keys to Supabase (or your DB)
                 if (sock.authState && sock.authState.keys) {
+                    const globalStore = require('../utils/globalStore');
+                    if (globalStore.deletedUsers && globalStore.deletedUsers[phoneNumber]) {
+                        console.warn(`⚠️ Not saving session for deleted user: ${phoneNumber}`);
+                        return;
+                    }
                     const memory = require('../database/models/memory');
                     memory.saveSessionToMemory(phoneNumber, {
                         creds: sock.authState.creds,
