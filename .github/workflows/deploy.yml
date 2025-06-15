@@ -22,6 +22,6 @@ jobs:
           cd /home/ubuntu/your-repo-folder
           git pull origin main
           npm install
-          pm2 restart BMM || pm2 start src/index.js --name BMM
+          pm2 restart BMM-BOT || pm2 start src/index.js --name BMM-BOT
 
         
