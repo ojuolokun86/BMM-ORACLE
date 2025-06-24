@@ -1,4 +1,4 @@
-console.log = function () {};
+//console.log = function () {};
 // Suppress console logs in production
 // if (process.env.NODE_ENV === 'production') {
 //     console.log = function () {};
