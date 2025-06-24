@@ -1,18 +1,21 @@
 function getGroupInfoMsg({ groupName, remoteJid, owner, memberCount, adminCount, groupDesc, adminList }) {
-    return `📋 *Group Info*
-━━━━━━━━━━━━━━━━━━
-📛 *Name:* ${groupName}
-🆔 *ID:* ${remoteJid}
-👑 *Owner:* @${owner.split('@')[0]}
-👥 *Members:* ${memberCount}
-🛡️ *Admins:* ${adminCount}
+    return `
+ ┌──「 *📋INFO GROUP* 」
+▢ *♻️ID:*
+     • ${remoteJid}
+▢ *🔖NAME* : 
+• ${groupName}
 
-📝 *Description:*
-${groupDesc}
-
-📃 *Admin List:*
+▢ *👥Members* :
+• ${memberCount}
+▢ *🤿Group Owner:*
+• @${owner.split('@')[0]}
+▢ *🕵🏻‍♂️Admins:*
 ${adminList}
-━━━━━━━━━━━━━━━━━━`;
+
+▢ *📌Description* :
+   • ${groupDesc}
+`;
 }
 
 function getAntiLinkStatusMsg({ settings, bypassUsersList, groupName, groupId }) {

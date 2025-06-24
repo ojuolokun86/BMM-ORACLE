@@ -17,6 +17,9 @@ const { startPoll, sendPollMessage, endPoll } = require('./poll'); // make sure 
 const { getGroupInfoMsg, getAntiLinkStatusMsg, getWarningListMsg, } = require('./text');
 const { getGroupOwner } = require('../utils/groupData');
 const { handleGroupStatsCommand, handleActiveMembersCommand, handleInactiveMembersCommand } = require('./groupStats');
+const { requestKickAllConfirmation, confirmKickAll, cancelKickAll } = require('./kickAll');
+const {requestDestroyGroupConfirmation, confirmDestroyGroup, cancelDestroyGroup, } = require('./destroyGroupUtils'); // Import Anti-Link functions
+const { requestKickInactiveConfirmation, confirmKickInactive, cancelKickInactive } = require('./kickInactive');
 
 
 const { 
@@ -59,7 +62,10 @@ const handleGroupCommand = async (sock, userId, message, command, args, sender, 
 
     if (!isGroup) {
         console.log(`❌ Command "${command}" can only be used in groups.`);
-        await sendToChat(botInstance, remoteJid, { message: '❌ This command can only be used in groups.' });
+        await sendToChat(botInstance, remoteJid, { 
+            message: '❌ This command can only be used in groups.', 
+            quotedMessage: message 
+        });
         return true; // Command handled
     }
      // Check if the sender is allowed based on group mode
@@ -650,7 +656,7 @@ const handleGroupCommand = async (sock, userId, message, command, args, sender, 
                                                                     adminList,
                                                                 });
 
-                                                            await sendToChat(botInstance, remoteJid, { message: infoMsg, mentions: [owner, ...admins.map(a => a.id)] });
+                                                            await sendToChat(botInstance, remoteJid, { message: infoMsg, mentions: [owner, ...admins.map(a => a.id)], quotedMessage: message });
                                                             console.log('✅ Group info sent.');
                                                         } catch (error) {
                                                             console.error('❌ Failed to fetch group info:', error);
@@ -940,50 +946,21 @@ const handleGroupCommand = async (sock, userId, message, command, args, sender, 
                                                 return true; // Command handled
 
 
+                                                    case 'kickall':
+                                                        if (!botIsAdmin) {
+                                                            await sendToChat(botInstance, remoteJid, { message: '❌ The bot must be an admin to execute this command.' });
+                                                            return true;
+                                                        }
+                                                        await requestKickAllConfirmation(sock, remoteJid, botInstance, userId);
+                                                        return true;
+                                                    case 'yeskick':
+                                                        await confirmKickAll(remoteJid);
+                                                        return true;
 
-                                                case 'kickall':
-                                        console.log('🚪 Executing "kick all" command...');
-                                        try {
-                                            // Ensure the bot is an admin
-                                            if (!botIsAdmin) {
-                                                console.log('❌ Command "kick all" denied: The bot is not an admin in this group.');
-                                                await sendToChat(botInstance, remoteJid, { message: '❌ The bot must be an admin to execute this command.' });
-                                                return true; // Command handled
-                                            }
-
-                                            // Fetch group participants
-                                            const groupMetadata = await sock.groupMetadata(remoteJid);
-                                            const participants = groupMetadata.participants;
-
-                                            // Filter out admins and the bot itself
-                                            const membersToKick = participants.filter(
-                                                (participant) => !participant.admin && participant.id !== botInstance.user.id
-                                            );
-
-                                            if (membersToKick.length === 0) {
-                                                console.log('ℹ️ No members to kick in this group.');
-                                                await sendToChat(botInstance, remoteJid, { message: 'ℹ️ No members to kick in this group.' });
-                                                return true; // Command handled
-                                            }
-
-                                            console.log(`🔍 Members to kick:`, membersToKick.map((member) => member.id));
-
-                                            // Kick each member
-                                            for (const member of membersToKick) {
-                                                try {
-                                                    await sock.groupParticipantsUpdate(remoteJid, [member.id], 'remove');
-                                                    console.log(`✅ Kicked member: ${member.id}`);
-                                                } catch (error) {
-                                                    console.error(`❌ Failed to kick member ${member.id}:`, error);
-                                                }
-                                            }
-
-                                            await sendToChat(botInstance, remoteJid, { message: '✅ All non-admin members have been kicked from the group.' });
-                                        } catch (error) {
-                                            console.error('❌ Failed to execute "kick all" command:', error);
-                                            await sendToChat(botInstance, remoteJid, { message: '❌ Failed to kick all members. Please try again later.' });
-                                        }
-                                        return true; // Command handled
+                                                    case 'cancelkick':
+                                                        cancelKickAll(remoteJid);
+                                                        await sendToChat(botInstance, remoteJid, { message: '⏹️ Kick all operation cancellation requested.' });
+                                                        return true;
 
                                         case 'antilink':
                                             console.log('⚙️ Executing "antilink" command...');
@@ -994,7 +971,7 @@ const handleGroupCommand = async (sock, userId, message, command, args, sender, 
                                                 return true;
                                             }
                                         
-                                               // Fetch the user_id from the users table for non-admin instances
+                                              // Fetch the user_id from the users table for non-admin instances
                                                     const userIdFromDatabase = await getUserFromUsersTable(normalizedUserId);
                                                     if (!userIdFromDatabase) {
                                                         console.error(`❌ User ID not found for bot instance: ${normalizedUserId}`);
@@ -1234,47 +1211,30 @@ const handleGroupCommand = async (sock, userId, message, command, args, sender, 
                                             }
                                             break;
 
-                                            case 'destroy':
-                                                if (args[0] === 'group') {
-                                                    // Destroy a group
-                                                    if (!isGroup) {
-                                                        await sendToChat(botInstance, remoteJid, { message: '❌ This command can only be used in a group.' });
-                                                        return true;
-                                                    }
-                                    
-                                                    try {
-                                                        console.log(`🔄 Destroying group: ${remoteJid}`);
-                                                        const groupMetadata = await sock.groupMetadata(remoteJid);
-                                                        console.log(`✅ Group metadata fetched:`, groupMetadata);
-
-                                                        console.log(`🔄 Destroying group: ${groupMetadata.subject}`);
-                                                        const participants = groupMetadata.participants.map((p) => p.id);
-                                    
-                                                        // Remove all participants from the group
-                                                        for (const participant of participants) {
-                                                            if (participant !== `${userId}@s.whatsapp.net`) {
-                                                                await sock.groupParticipantsUpdate(remoteJid, [participant], 'remove');
-                                                                console.log(`✅ Removed participant: ${participant}`);
-                                                            }
+                                           case 'destroy':
+                                                    if (args[0] === 'group') {
+                                                        if (!isGroup) {
+                                                            await sendToChat(botInstance, remoteJid, { message: '❌ This command can only be used in a group.' });
+                                                            return true;
                                                         }
-                                    
-                                                        // Leave the group after removing all participants
-                                                        await sock.groupLeave(remoteJid);
-                                                        console.log(`✅ Group destroyed: ${remoteJid}`);
-                                                                                                    // Send success message to the bot owner's DM
-                                                            const ownerJid = `${userId}@s.whatsapp.net`;
-                                                            await sendToChat(botInstance, ownerJid, {
-                                                                message: `✅ Group "${groupMetadata.subject}" was successfully destroyed.`,
-                                                            });
-                                                            console.log(`✅ Success message sent to bot owner's DM: ${ownerJid}`);
-                                                        } catch (error) {
-                                                            console.error(`❌ Failed to destroy group:`, error);
-                                                            await sendToChat(botInstance, remoteJid, { message: '❌ Failed to destroy group. Please try again later.' });
+                                                        if (!botIsAdmin) {
+                                                            await sendToChat(botInstance, remoteJid, { message: '❌ The bot must be an admin to destroy the group.' });
+                                                            return true;
                                                         }
+                                                        await requestDestroyGroupConfirmation(sock, remoteJid, botInstance, userId);
                                                         return true;
                                                     }
                                                     break;
 
+                                                case 'yesdestroy':
+                                                    await confirmDestroyGroup(remoteJid);
+                                                    return true;
+
+                                                case 'canceldestroy':
+                                                    cancelDestroyGroup(remoteJid);
+                                                    await sendToChat(botInstance, remoteJid, { message: '⏹️ Destroy group operation cancellation requested.' });
+                                                    return true;
+                                                   
                                             case 'stats':
                                                 try {
                                                     console.log('📊 Executing "stats" command...');
@@ -1306,6 +1266,20 @@ const handleGroupCommand = async (sock, userId, message, command, args, sender, 
                                                         await sendToChat(botInstance, remoteJid, { message: '❌ Failed to retrieve inactive members. Please try again later.' });
                                                         return true;
                                                     }
+                                                    case 'kickinactive':
+                                                        if (!botIsAdmin) {
+                                                            await sendToChat(botInstance, remoteJid, { message: '❌ The bot must be an admin to execute this command.' });
+                                                            return true;
+                                                        }
+                                                        await requestKickInactiveConfirmation(sock, remoteJid, botInstance, userId);
+                                                        return true;
+                                                    case 'confirm':
+                                                        await confirmKickInactive(remoteJid);
+                                                        return true;
+                                                    case 'cancelk':
+                                                        cancelKickInactive(remoteJid);
+                                                        await sendToChat(botInstance, remoteJid, { message: '⏹️ Kick inactive operation cancellation requested.' });
+                                                        return true;
                                                     
                                         case 'leave':
                                             console.log('🚪 Executing "leave" command...');

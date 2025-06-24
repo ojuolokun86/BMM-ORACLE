@@ -1,3 +1,5 @@
+const { cancelKickAll } = require("../message-controller/kickAll");
+
 const commandEmojis = {
     // General Commands
     menu: '📜',
@@ -40,6 +42,16 @@ const commandEmojis = {
     stats: '📈',
     active: '🟢',
     inactive: '🔴',
+    yeskick: '✅',
+    cancelkick: '❌',
+    yesdestroy: '✅',
+    canceldestroy: '❌',
+    time: '⏰',
+    confirm: '✔️',
+    cancelk: '❌',
+    download: '⬇️',
+    listgroups: '📋',
+    help: '📜',
 
     // Utility Commands
     delete: '🗑️',
@@ -56,6 +68,7 @@ const commandEmojis = {
     deleteit: '🗑️',
     block: '🚫',
     unblock: '✅',
+    imagine: '🖌️',
 
     // Protection Commands
     antilink: '🔗',
@@ -107,6 +120,7 @@ const commandEmojis = {
     roll: '🎲',
     quote: '💬',
     joke: '😂',
+    ai : '🤖',
 };
 
 const getEmojiForCommand = (command) => {

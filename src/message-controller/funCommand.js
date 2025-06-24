@@ -1,18 +1,20 @@
+// fun-commands.js
 const axios = require('axios');
 const path = require('path');
+const tmp = require('tmp');
+const fs = require('fs');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { sendToChat } = require('../utils/messageUtils');
-const { getFunMenu } = require('../utils/funMenu');
-const { prefix } = require('../database/userPrefix');
-const sharp = require('sharp')
+const sharp = require('sharp');
+const ffmpeg = require('fluent-ffmpeg');
 
+function getTargetUser(message, args) {
+    const contextInfo = message.message?.extendedTextMessage?.contextInfo;
+    if (contextInfo?.participant) return contextInfo.participant;
+    if (args[0]) return args[0].includes('@') ? args[0] : `${args[0]}@s.whatsapp.net`;
+    return null;
+}
 
-
-/**
- * Convert an image buffer to WhatsApp-compatible WebP sticker buffer.
- * @param {Buffer} imageBuffer
- * @returns {Promise<Buffer>}
- */
 async function toWebpStickerBuffer(imageBuffer) {
     return sharp(imageBuffer)
         .resize(512, 512, { fit: 'inside' })
@@ -20,347 +22,170 @@ async function toWebpStickerBuffer(imageBuffer) {
         .toBuffer();
 }
 
-function getTargetUser(message, args) {
-    // Check if replying to a message with participant ID
-    const contextInfo = message.message?.extendedTextMessage?.contextInfo;
-    if (contextInfo?.participant) {
-        return contextInfo.participant;  // This should be full WhatsApp ID
-    }
-    // Use argument, ensure full ID format if possible
-    if (args[0]) {
-        // If just a number, append @s.whatsapp.net
-        if (!args[0].includes('@')) {
-            return `${args[0]}@s.whatsapp.net`;
-        }
-        return args[0];
-    }
-    return null; // Or 'someone'
+async function gifToAnimatedStickerBuffer(gifBuffer) {
+    return new Promise((resolve, reject) => {
+        const inputFile = tmp.tmpNameSync({ postfix: '.gif' });
+        const outputFile = tmp.tmpNameSync({ postfix: '.webp' });
+        fs.writeFileSync(inputFile, gifBuffer);
+
+        ffmpeg(inputFile)
+            .outputOptions([
+                '-vcodec', 'libwebp',
+                '-vf', "scale=320:320:force_original_aspect_ratio=decrease,fps=15,pad=320:320:(ow-iw)/2:(oh-ih)/2:color=white@0.0,split[a][b];[a]palettegen=reserve_transparent=on:transparency_color=ffffff[p];[b][p]paletteuse",
+                '-loop', '0'
+            ])
+            .toFormat('webp')
+            .save(outputFile)
+            .on('end', () => {
+                const webp = fs.readFileSync(outputFile);
+                fs.unlinkSync(inputFile);
+                fs.unlinkSync(outputFile);
+                resolve(webp);
+            })
+            .on('error', err => {
+                fs.unlinkSync(inputFile);
+                reject(err);
+            });
+    });
 }
 
-
 async function fetchGiphyActionGif(action) {
-  try {
-    const res = await axios.get('https://api.giphy.com/v1/gifs/search', {
-      params: {
-        api_key: 'C5XVeQxRFvdVEXvO1qKN33E7cmvQss2n',  // your API key
-        q: action,
-        limit: 1,
-        rating: 'g'
-      }
-    });
-    
-    if (res.data.data.length === 0) return null;
-    
-    // Get original GIF URL
-    const gifUrl = res.data.data[0].images.original.url;
-    
-    // Download the GIF as buffer for sticker conversion, if needed
-    const imgRes = await axios.get(gifUrl, { responseType: 'arraybuffer' });
-    return Buffer.from(imgRes.data, 'binary');
-    
-  } catch (err) {
-    console.error('Error fetching from Giphy:', err);
-    return null;
-  }
+    try {
+        const res = await axios.get('https://api.giphy.com/v1/gifs/search', {
+            params: {
+                api_key: 'C5XVeQxRFvdVEXvO1qKN33E7cmvQss2n',
+                q: action,
+                limit: 1,
+                rating: 'g'
+            }
+        });
+        if (!res.data.data.length) return null;
+        const gifUrl = res.data.data[0].images.original.url;
+        const imgRes = await axios.get(gifUrl, { responseType: 'arraybuffer' });
+        return Buffer.from(imgRes.data);
+    } catch (err) {
+        console.error('Giphy fetch error:', err);
+        return null;
+    }
+}
+
+function enhancePrompt(prompt) {
+    const qualityEnhancers = ['high quality', 'detailed', 'masterpiece', 'ultra realistic', '4k', 'sharp focus'];
+    const selected = qualityEnhancers.sort(() => 0.5 - Math.random()).slice(0, 3);
+    return `${prompt}, ${selected.join(', ')}`;
+}
+
+// 🔁 Repeatable action handler
+async function handleFunAction(sock, message, command, args, remoteJid, botInstance) {
+    const target = getTargetUser(message, args);
+    const senderId = message.key.participant || message.key.remoteJid;
+    const senderTag = `@${senderId.split('@')[0]}`;
+    const targetTag = target ? `@${target.split('@')[0]}` : 'someone';
+    const text = `🔸 ${senderTag} ${command}s ${targetTag}!`;
+    const mentions = target ? [senderId, target] : [senderId];
+
+    const gifBuffer = await fetchGiphyActionGif(command);
+    if (!gifBuffer) {
+        await sendToChat(botInstance, remoteJid, { message: text, mentions, quotedMessage: message });
+        return;
+    }
+
+    const webpBuffer = await gifToAnimatedStickerBuffer(gifBuffer);
+    await sock.sendMessage(remoteJid, { sticker: webpBuffer, mentions }, { quoted: message });
+    await sendToChat(botInstance, remoteJid, { message: text, mentions, quotedMessage: message });
 }
 
 const handleFunCommand = async (sock, message, command, args, userId, remoteJid, botInstance) => {
     try {
         switch (command) {
-                           case 'sticker': {
-                    let imageBuffer = null;
+            case 'imagine': {
+                const prompt = args.join(' ').trim();
+                if (!prompt) return await sendToChat(botInstance, remoteJid, {
+                    message: 'Please provide a prompt. Example: .imagine a castle on a cliff', quotedMessage: message });
+                await sendToChat(botInstance, remoteJid, {
+                    message: '🎨 Generating your image... Please wait.', quotedMessage: message });
+                const enhancedPrompt = enhancePrompt(prompt);
+                const res = await axios.get('https://api.shizo.top/ai/imagine/flux', {
+                    params: { apikey: 'knightbot', prompt: enhancedPrompt }, responseType: 'arraybuffer' });
+                return await sock.sendMessage(remoteJid, { image: Buffer.from(res.data), caption: `🎨 Prompt: "${prompt}"` }, { quoted: message });
+            }
 
-                    // 1. Check if replying to a media message
-                    const quotedMessage = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-                    const quotedMessageType = quotedMessage ? Object.keys(quotedMessage)[0] : null;
-
-                    if (quotedMessage && quotedMessageType === 'imageMessage') {
-                        // Download buffer from quoted image
-                        const mediaMessage = quotedMessage.imageMessage;
-                        imageBuffer = await downloadMediaMessage(
-                            { message: { imageMessage: mediaMessage } },
-                            'buffer',
-                            {}
-                        );
-                    } else if (message.message?.imageMessage) {
-                        // 2. Check if the message itself is an image
-                        imageBuffer = await downloadMediaMessage(message, 'buffer', {});
-                    } else if (args[0] && args[0].startsWith('http')) {
-                        // 3. Download from URL
-                        const response = await axios.get(args[0], { responseType: 'arraybuffer' });
-                        imageBuffer = Buffer.from(response.data, 'binary');
-                    }
-
-                    if (!imageBuffer) {
-                        await sendToChat(botInstance, remoteJid, {
-                            message: '❌ Reply to an image or provide an image URL to make a sticker.',
-                            quotedMessage: message
-                        });
-                        return true;
-                    }
-
-                    let webpBuffer;
-                try {
-                    webpBuffer = await toWebpStickerBuffer(imageBuffer);
-                } catch (err) {
-                    await sendToChat(botInstance, remoteJid, {
-                        message: '❌ Failed to convert image to sticker.',
-                        quotedMessage: message
-                    });
-                    return true;
+            case 'sticker': {
+                let imageBuffer = null;
+                const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+                const type = quoted ? Object.keys(quoted)[0] : null;
+                if (quoted && type === 'imageMessage') {
+                    imageBuffer = await downloadMediaMessage({ message: { imageMessage: quoted.imageMessage } }, 'buffer', {});
+                } else if (message.message?.imageMessage) {
+                    imageBuffer = await downloadMediaMessage(message, 'buffer', {});
+                } else if (args[0]?.startsWith('http')) {
+                    const res = await axios.get(args[0], { responseType: 'arraybuffer' });
+                    imageBuffer = Buffer.from(res.data);
                 }
-
-                await sock.sendMessage(remoteJid, { sticker: webpBuffer }, { quoted: message });
-                return true;
+                if (!imageBuffer) return await sendToChat(botInstance, remoteJid, {
+                    message: '❌ Reply to or send an image to make a sticker.', quotedMessage: message });
+                const webpBuffer = await toWebpStickerBuffer(imageBuffer);
+                return await sock.sendMessage(remoteJid, { sticker: webpBuffer }, { quoted: message });
             }
 
             case 'emoji': {
-                // Usage: .emoji 😎
                 const emoji = args[0];
-                if (!emoji) {
-                    await sendToChat(botInstance, remoteJid, {
-                        message: '❌ Please provide an emoji. Example: `.emoji 😎`',
-                        quotedMessage: message
-                    });
-                    return true;
-                }
-                console.log(`🔍 Debugging emoji:`, emoji);
-                // Create a canvas and draw the emoji
+                if (!emoji) return await sendToChat(botInstance, remoteJid, {
+                    message: '❌ Provide an emoji. Example: .emoji 😎', quotedMessage: message });
                 const codePoint = emoji.codePointAt(0).toString(16);
                 const url = `https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/${codePoint}.png`;
-                const response = await axios.get(url, { responseType: 'arraybuffer' });
-                const buffer = Buffer.from(response.data, 'binary');
-                let webpBuffer;
-                    try {
-                        webpBuffer = await toWebpStickerBuffer(buffer);
-                    } catch (err) {
-                        await sendToChat(botInstance, remoteJid, {
-                            message: '❌ Failed to convert emoji to sticker.',
-                            quotedMessage: message
-                        });
-                        return true;
-                    }
-                    await sock.sendMessage(remoteJid, { sticker: webpBuffer }, { quoted: message });
-                    return true;
-                }
+                const res = await axios.get(url, { responseType: 'arraybuffer' });
+                const buffer = Buffer.from(res.data);
+                const webpBuffer = await toWebpStickerBuffer(buffer);
+                return await sock.sendMessage(remoteJid, { sticker: webpBuffer }, { quoted: message });
+            }
 
-                // Add these to the fun command routing case list:
-       case 'baka':
-case 'bite':
-case 'blush':
-case 'bored':
-case 'cry':
-case 'cuddle':
-case 'dance':
-case 'facepalm':
-case 'feed':
-case 'happy':
-case 'highfive':
-case 'hug':
-case 'kick':
-case 'kill':
-case 'kiss':
-case 'laugh':
-case 'lick':
-case 'pat':
-case 'poke':
-case 'pout':
-case 'shoot':
-case 'shrug':
-case 'slap':
-case 'smile':
-case 'smug':
-case 'stare':
-case 'think':
-case 'thumbsup':
-case 'tickle':
-case 'wave':
-case 'wink':
-case 'yeet': {
-  const actionMap = {
-    baka: 'baka',
-    bite: 'bite',
-    blush: 'blush',
-    bored: 'bored',
-    cry: 'cry',
-    cuddle: 'cuddle',
-    dance: 'dance',
-    facepalm: 'facepalm',
-    feed: 'feed',
-    happy: 'happy',
-    highfive: 'highfive',
-    hug: 'hug',
-    kick: 'kick',
-    kill: 'kill',
-    kiss: 'kiss',
-    laugh: 'laugh',
-    lick: 'lick',
-    pat: 'pat',
-    poke: 'poke',
-    pout: 'pout',
-    shoot: 'shoot',
-    shrug: 'shrug',
-    slap: 'slap',
-    smile: 'smile',
-    smug: 'smug',
-    stare: 'stare',
-    think: 'think',
-    thumbsup: 'thumbsup',
-    tickle: 'tickle',
-    wave: 'wave',
-    wink: 'wink',
-    yeet: 'yeet'
-  };
+            case 'quote': {
+                const res = await axios.get('https://zenquotes.io/api/random');
+                const data = res.data[0];
+                return await sendToChat(botInstance, remoteJid, {
+                    message: `💬 *Quote of the Moment*\n\n"${data.q}"\n\n— _${data.a}_`, quotedMessage: message });
+            }
 
-  if (actionMap[command]) {
-    const action = actionMap[command];
-    const target = getTargetUser(message, args); // your function to get target user ID
-   const senderId = message.key.participant || message.key.remoteJid || null;
-    if (!senderId) {
-    console.error('senderId is missing');
-    return false; // or handle error gracefully
-    }
+            case 'joke': {
+                const res = await axios.get('https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,religious,political,racist,sexist,explicit');
+                const joke = res.data.type === 'single' ? res.data.joke : `${res.data.setup}\n${res.data.delivery}`;
+                return await sendToChat(botInstance, remoteJid, {
+                    message: `😂 *Joke of the Moment*\n\n${joke}`, quotedMessage: message });
+            }
 
-    const senderTag = `@${senderId.split('@')[0]}`;
+            case 'translate': {
+                const [targetLang, ...textArr] = args;
+                const text = textArr.join(' ');
+                if (!targetLang || !text) return await sendToChat(botInstance, remoteJid, {
+                    message: '❌ Usage: .translate <lang_code> <text>', quotedMessage: message });
+                const res = await axios.post('https://libretranslate.de/translate', {
+                    q: text, source: 'auto', target: targetLang, format: 'text'
+                }, { headers: { accept: 'application/json' } });
+                return await sendToChat(botInstance, remoteJid, {
+                    message: `🌐 *Translated (${targetLang}):*\n${res.data.translatedText}`, quotedMessage: message });
+            }
 
-    let text = '';
-    let mentions = [];
+            // 🎯 INDIVIDUAL CASE BLOCKS FOR ACTION COMMANDS
+            case 'slap': case 'hug': case 'kick': case 'poke': case 'tickle':
+            case 'cry': case 'pat': case 'kill': case 'kiss': case 'wave':
+            case 'blush': case 'shrug': case 'smile': case 'laugh':
+            case 'lick': case 'bored': case 'stare': case 'yeet': case 'feed':
+            case 'dance': case 'cuddle': case 'highfive': case 'facepalm':
+            case 'thumbsup': case 'think': case 'shoot': case 'pout':
+            case 'bite': case 'smug': case 'baka': {
+                return await handleFunAction(sock, message, command, args, remoteJid, botInstance);
+            }
 
-    if (target === 'someone' || !target) {
-    text = `🔸 ${senderTag} ${command}s someone!`;
-    mentions = [senderId];
-    } else {
-    const targetTag = `@${target.split('@')[0]}`;
-    text = `🔸 ${senderTag} ${command}s ${targetTag}!`;
-    mentions = [senderId, target];
-    }
-
-
-    // Fetch the sticker from nekos.best (your existing function)
-   const stickerBuffer = await fetchGiphyActionGif(actionMap[command]);
-    if (!stickerBuffer) {
-      // If no sticker, just send the message with mentions
-      await sendToChat(botInstance, remoteJid, { message: text, mentions, quotedMessage: message });
-      return true;
-    }
-
-    // Convert to webp sticker buffer (your existing function)
-    let webpBuffer;
-    try {
-      webpBuffer = await toWebpStickerBuffer(stickerBuffer);
-    } catch (err) {
-      await sendToChat(botInstance, remoteJid, {
-        message: text + '\n❌ Failed to convert action to sticker.',
-        mentions,
-        quotedMessage: message
-      });
-      return true;
-    }
-
-    // Send sticker first, with mentions if any
-    await sock.sendMessage(
-      remoteJid,
-      {
-        sticker: webpBuffer,
-        ...(mentions.length > 0 && { mentions }),
-      },
-      { quoted: message }
-    );
-
-    // Then send the mention message (text) so WhatsApp displays the tagged names properly
-    await sendToChat(botInstance, remoteJid, {
-      message: text,
-      mentions,
-      quotedMessage: message,
-    });
-
-    return true;
-  }
-}
-
-
-         case 'quote': {
-    try {
-        const response = await axios.get('https://zenquotes.io/api/random');
-        const data = response.data[0];
-        const quote = data.q;
-        const author = data.a;
-        const formatted = `💬 *Quote of the Moment*\n\n"${quote}"\n\n— _${author}_`;
-        await sendToChat(botInstance, remoteJid, { message: formatted, quotedMessage: message });
-    } catch (err) {
-        await sendToChat(botInstance, remoteJid, { message: '❌ Could not fetch a quote at this time.', quotedMessage: message });
-    }
-    return true;
-}
-
-
-case 'joke': {
-    try {
-        const response = await axios.get('https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,religious,political,racist,sexist,explicit');
-        let formatted;
-        if (response.data.type === 'single') {
-            formatted = `😂 *Joke of the Moment*\n\n${response.data.joke}`;
-        } else {
-            formatted = `😂 *Joke of the Moment*\n\n${response.data.setup}\n${response.data.delivery}`;
-        }
-        await sendToChat(botInstance, remoteJid, { message: formatted, quotedMessage: message });
-    } catch (err) {
-        await sendToChat(botInstance, remoteJid, { message: '❌ Could not fetch a joke at this time.', quotedMessage: message });
-    }
-    return true;
-}
-
-case 'translate': {
-    // Usage: .translate <lang> <text>
-    const [targetLang, ...textArr] = args;
-    const text = textArr.join(' ');
-    if (!targetLang || !text) {
-        await sendToChat(botInstance, remoteJid, {
-            message: '❌ Usage: .translate <target_lang_code> <text>\nExample: .translate es Hello world',
-            quotedMessage: message
-        });
-        return true;
-    }
-    try {
-        // Auto-detect source language and translate
-        const resp = await axios.post('https://libretranslate.de/translate', {
-            q: text,
-            source: 'auto',
-            target: targetLang,
-            format: 'text'
-        }, {
-            headers: { accept: 'application/json' }
-        });
-        const translated = resp.data.translatedText;
-        await sendToChat(botInstance, remoteJid, {
-            message: `🌐 *Translated (${targetLang}):*\n${translated}`,
-            quotedMessage: message
-        });
-    } catch (err) {
-        await sendToChat(botInstance, remoteJid, {
-            message: '❌ Could not translate. Please try again or check your language code.',
-            quotedMessage: message
-        });
-    }
-    return true;
-}
-case 'fun': {
-    await sendToChat(botInstance, remoteJid, {
-        message: getFunMenu(prefix), // Pass the user's prefix if available
-        quotedMessage: message
-    });
-    return true;
-}
-             default:
+            default:
                 return false;
         }
-    } catch (error) {
-        console.error(`❌ Error handling fun command: ${error.message}`);
+    } catch (err) {
+        console.error('❌ Error in fun command:', err);
         await sendToChat(botInstance, remoteJid, {
-            message: '❌ Error processing fun command.',
-            quotedMessage: message
-        });
-        return true; // Considered handled, since we replied with an error
+            message: '❌ An error occurred while processing the command.', quotedMessage: message });
+        return true;
     }
 };
+
 module.exports = { handleFunCommand };

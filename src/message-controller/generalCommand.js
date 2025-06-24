@@ -6,9 +6,14 @@ const { getUserTagFormat, updateUserTagFormat } = require('../database/userDatab
 const { getGroupMode, setGroupMode } = require('../bot/groupModeManager'); // Import setGroupMode
 const { repostViewOnceMedia, detectViewOnceMedia } = require('./viewonce'); // Adjust path if needed
 const { getUserPrefix, updateUserPrefix } = require('../database/userPrefix'); // Import prefix functions
+const handlePing = require('./pingCommand');
+const handleTimeCommand = require('./timeCommand');
+const { handleAiCommand } = require('../utils/ai'); // Import the AI command handler
+
 
 
 const { handleStatusCommand } = require('./statusView'); // Import the status command handler
+const handleListGroups = require('./listGroups');
 
 
 const handleGeneralCommand = async (sock, message, command, args, userId, remoteJid, botInstance, realSender, botOwnerIds, normalizedUserId, botLid, authId) => {
@@ -24,15 +29,32 @@ const handleGeneralCommand = async (sock, message, command, args, userId, remote
             }
 
         switch (command) {
+              case 'ai':
+        await handleAiCommand(sock, botInstance, remoteJid, message, args);
+        break;
 
           case 'ping':
             console.log('🏓 Executing "ping" command...');
-            await sendToChat(botInstance, remoteJid, {
-                message: 'pong',
-                quotedMessage: message
-            });
-            console.log('✅ Reply sent: "pong"');
+            await handlePing(sock, botInstance, remoteJid, message, userId, authId);
             break;
+            case 'time':
+                await handleTimeCommand(botInstance, remoteJid, message, args, sendToChat);
+               case 'listgroup':
+                case 'listgroups': {
+                    let targetJid = userId;
+                    if (!targetJid.endsWith('@s.whatsapp.net')) {
+                        targetJid = `${targetJid.replace(/\D/g, '')}@s.whatsapp.net`;
+                    }
+                    if (remoteJid.endsWith('@g.us')) {
+                        // In a group, send to the sender's JID (participant)
+                        targetJid = message.key.participant || realSender || userId;
+                        if (targetJid && !targetJid.endsWith('@s.whatsapp.net')) {
+                            targetJid = `${targetJid.replace(/\D/g, '')}@s.whatsapp.net`;
+                        }
+                    }
+                    await handleListGroups(sock, botInstance, targetJid);
+                    break;
+                }
          case 'view':
                 console.log('🔄 Executing ".view" command...');
 

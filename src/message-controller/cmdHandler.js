@@ -14,14 +14,8 @@ const { handleFunCommand } = require('./funCommand'); // Import fun command hand
 const { handleProtectionCommand } = require('./protection'); // Import protection command handler
 const { addAnalyticsData } = require('../server/info'); // Import analytics functions
 const { emitAnalyticsUpdate } = require('../server/socket');
-const {
-    getMenuCategories,
-    getGeneralMenu,
-    getSettingsMenu,
-    getProtectionMenu,
-    getGroupMenu,
-    getFunMenu
-} = require('../utils/menu');
+const { menu } = require('../utils/menu');
+const { handleDownloadCommand } = require('./downloadCommand');
 
 
 
@@ -115,31 +109,12 @@ if (
     // Handle specific commands
     switch (command) {
 
-case 'menu': {
-    let menuMsg;
-    const category = (args[0] || '').toLowerCase();
-    switch (category) {
-        case 'general':
-            menuMsg = getGeneralMenu(userPrefix);
-            break;
-        case 'settings':
-            menuMsg = getSettingsMenu(userPrefix);
-            break;
-        case 'protection':
-            menuMsg = getProtectionMenu(userPrefix);
-            break;
-        case 'group':
-            menuMsg = getGroupMenu(userPrefix);
-            break;
-        case 'fun':
-            menuMsg = getFunMenu(userPrefix);
-            break;
-        default:
-            menuMsg = getMenuCategories(userPrefix);
-    }
-    await sendToChat(botInstance, remoteJid, { message: menuMsg });
-    return;
-}
+       case 'menu':
+        case 'help':
+            // Get the bot owner name from sock.user (if available)
+            const ownerName = (sock.user && (sock.user.name || sock.user.pushName)) || 'lash man';
+            await menu(sock, remoteJid, message, userPrefix, ownerName);
+            return;
         case 'poll':
             case 'endpoll':
             case 'announce':
@@ -169,6 +144,13 @@ case 'menu': {
             case 'stats':
             case 'active':
             case 'inactive':
+            case 'cancelkick':
+            case 'yeskick':
+            case 'canceldestroy':
+            case 'yesdestroy':
+            case 'kickinactive':
+            case 'confirm':
+            case 'cancelk':
                 console.log(`📢 Routing "${command}" to groupCommand.js...`);
                 const handled = await handleGroupCommand(sock, userId, message, command, args, sender, null, botInstance, true);
                 if (handled) {
@@ -190,6 +172,12 @@ case 'menu': {
                 case 'status':
                 case 'view':
                 case 'deleteit':
+                case 'time':
+                case 'listgroup':
+                case 'listgroups':
+                case 'remove':
+                case 'leavegroup':
+                case 'ai':
                     console.log(`📜 Routing "${command}" to generalCommand.js...`);
                     const generalHandled = await handleGeneralCommand(sock, message, command, args, userId, remoteJid, botInstance, realSender, botOwnerIds, normalizedUserId, botLid, authId, );
                     if (generalHandled) {
@@ -198,7 +186,8 @@ case 'menu': {
                         console.log(`❌ Command "${command}" was not handled by generalCommand.js.`);
                     }
                     break;
-
+            // Handle settings commands
+                        case 'imagine':
                         case 'sticker':
                         case 'emoji':
                         case 'baka':
@@ -270,6 +259,10 @@ case 'menu': {
                 }
                 break;
 
+                case 'download':
+                await handleDownloadCommand(sock, botInstance, remoteJid, args);
+                return;
+
                 // ...inside your main switch(command)...
                 // case 'upload':
                 // if (!['gold', 'premium'].includes(subscriptionLevel)) {
@@ -302,11 +295,30 @@ case 'menu': {
         console.log(`⚙️ Routing "${command}" to settingsCommand.js...`);
         await handleSettingsCommand(sock, message, remoteJid, userId, command, args, botInstance, realSender, normalizedUserId, subscriptionLevel, botLid);
         return; // Exit after handling settings commands
-            default:
-            console.log(`❓ Unknown command: "${command}". Ignoring...`);
-            await sendToChat(botInstance, remoteJid, { message: `🤖I dont know you MR 😂: ${command}` });
-            return; // Exit if the command is unknown
-    }
+          default:
+            const unknownMessages = [
+                `😂 I don’t speak gibberish, boss! *${command}* is not in my dictionary!`,
+                `🧬 ERROR 404: Command *${command}* not found in universe.\nTry *.help* before the system collapses.`,
+                `🤖 I didn’t get that command: *${command}*.\nType *.help* to see what I understand!`,
+                `🛑 Invalid command detected: *${command}*.\nAre you trying to break me or just showing off? 😏`,
+                `🧊 Yo, *${command}* isn’t a valid move.\nTry *.help* to see my power.`,
+                `⚠️ Beep-boop... Command *${command}* is unknown.\nInitiate *.help* to restore logic.`,
+                `😑 *${command}?* Seriously? I don’t even know what that means.\nType *.help* jare.`,
+                `🎮 Cheat code *${command}* is invalid! Try *.help* to unlock real commands.`
+            ];
+
+            // Pick one message at random
+            const randomResponse = unknownMessages[Math.floor(Math.random() * unknownMessages.length)];
+
+            console.log(`❓ Unknown command: "${command}". Sending random response.`);
+            await sendToChat(botInstance, remoteJid, {
+                 message: randomResponse,
+                quotedMessage: message 
+             });
+            return;
+
+}
+
         } catch (error) {
             console.error(`❌ Error handling command for user ${userId}:`, error);
         } finally {

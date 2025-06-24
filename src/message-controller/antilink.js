@@ -1,109 +1,98 @@
 const supabase = require('../supabaseClient');
 const { warnUser, getWarningThreshold, resetWarnings } = require('../database/warning');
 const { sendToChat } = require('../utils/messageUtils');
-const path = require('path');
-const linkRegex = /(https?:\/\/[^\s]+|www\.[^\s]+|wa\.me\/[^\s]+|chat\.whatsapp\.com\/[^\s]+|t\.me\/[^\s]+|bit\.ly\/[^\s]+|[\w-]+\.(com|net|org|info|biz|xyz|live|tv|me|link)(\/\S*)?)/gi;
-const { normalizeUserId } = require('../utils/normalizeUserId'); // Import the normalize function
+const { normalizeUserId } = require('../utils/normalizeUserId');
 const { deletedMessagesByBot } = require('../utils/globalStore');
-const { getGroupAdmins } = require('../utils/groupData'); // Import the group data functions
+const { getGroupAdmins } = require('../utils/groupData');
 const { antilinkCache } = require('../utils/settingsCache');
 
+const linkRegex = /(https?:\/\/[^\s]+|www\.[^\s]+|wa\.me\/[^\s]+|chat\.whatsapp\.com\/[^\s]+|t\.me\/[^\s]+|bit\.ly\/[^\s]+|[\w-]+\.(com|net|org|info|biz|xyz|live|tv|me|link)(\/\S*)?)/gi;
+
 /**
- * Fetch a user from the `users` table by user ID.
- * @param {string} userId - The user's ID.
+ * Fetch a user from the `users` table by user ID or LID.
+ * @param {string} userIdOrLid - The user's ID or LID.
  * @returns {Promise<object|null>} - The user data or null if not found.
  */
-const getUserFromUsersTable = async (userId) => {
-    const normalizedUserId = normalizeUserId(userId); // Normalize userId
-    console.log(`🔍 Fetching user from users table for user ID: ${normalizedUserId}...`);
-
+const getUserFromUsersTable = async (userIdOrLid) => {
+    const normalized = normalizeUserId(userIdOrLid);
     const { data, error } = await supabase
         .from('users')
         .select('*')
-        .eq('user_id', normalizedUserId)
+        .or(`user_id.eq.${normalized},lid.eq.${normalized}`)
         .single();
 
     if (error && error.code !== 'PGRST116') {
-        console.error(`❌ Error fetching user from users table for user ID ${normalizedUserId}:`, error);
+        console.error(`❌ Error fetching user from users table for user ID/LID ${normalized}:`, error);
         throw error;
     }
-
     if (!data) {
-        console.log(`⚠️ User with ID ${normalizedUserId} not found in users table.`);
+        console.log(`⚠️ User with ID/LID ${normalized} not found in users table.`);
         return null;
     }
-
     return data;
 };
 
 /**
  * Update Anti-Link settings for a group and user.
  * @param {string} groupId - The group ID.
- * @param {string} userLid - The user's Linked ID.
+ * @param {string} userId - The user's ID (should be normalized user_id).
  * @param {object} settings - The new Anti-Link settings.
  * @returns {Promise<void>}
  */
-const updateAntiLinkSettings = async (groupId, userLid, settings) => {
-    console.log(`🔄 Updating Anti-Link settings for group ${groupId} and user ${userLid}:`, settings);
-
+const updateAntiLinkSettings = async (groupId, userId, settings) => {
+    const normalizedUserId = normalizeUserId(userId);
     const { error } = await supabase
         .from('antilink_settings')
         .upsert(
             {
                 group_id: groupId,
-                user_id: userLid, // Use Linked ID as user_id
-                ...settings, // Spread the settings object to include antilink_enabled, warning_count, etc.
+                user_id: normalizedUserId,
+                ...settings,
             },
-            { onConflict: ['group_id', 'user_id'] } // Ensure these columns have a unique constraint
+            { onConflict: ['group_id', 'user_id'] }
         );
-
     if (error) {
-        console.error(`❌ Error updating Anti-Link settings for group ${groupId} and user ${userLid}:`, error);
+        console.error(`❌ Error updating Anti-Link settings for group ${groupId} and user ${normalizedUserId}:`, error);
         throw error;
     }
-     if (!error) {
-        const cacheKey = `${groupId}:${userLid}`;
-        antilinkCache.set(cacheKey, { data: settings, timestamp: Date.now() });
-    }
-
-    console.log(`✅ Anti-Link settings updated for group ${groupId} and user ${userLid}.`);
+    const cacheKey = `${groupId}:${normalizedUserId}`;
+    antilinkCache.delete(cacheKey); // Invalidate cache after update
 };
 
 /**
  * Fetch Anti-Link settings for a group and user.
  * @param {string} groupId - The group ID.
- * @param {string} userLid - The user's Linked ID.
+ * @param {string} userId - The user's ID (should be normalized user_id).
  * @returns {Promise<object>} - The Anti-Link settings.
  */
-const getAntiLinkSettings = async (groupId, userLid) => {
-    console.log(`🔍 Fetching Anti-Link settings for group ${groupId} and user ${userLid}...`);
-
+const getAntiLinkSettings = async (groupId, userId) => {
+    const normalizedUserId = normalizeUserId(userId);
     const { data, error } = await supabase
         .from('antilink_settings')
         .select('*')
         .eq('group_id', groupId)
-        .eq('user_id', userLid) // Use Linked ID as user_id
+        .eq('user_id', normalizedUserId)
         .single();
 
     if (error && error.code !== 'PGRST116') {
-        console.error(`❌ Error fetching Anti-Link settings for group ${groupId} and user ${userLid}:`, error);
+        console.error(`❌ Error fetching Anti-Link settings for group ${groupId} and user ${normalizedUserId}:`, error);
         throw error;
     }
-    return data || { antilink_enabled: false, warning_count: 3, bypass_admin: false, bypass_users: [] }; // Default settings
+    return data || { antilink_enabled: false, warning_count: 3, bypass_admin: false, bypass_users: [] };
 };
 
 /**
  * Fetch Anti-Link settings for a group and user with caching.
  * @param {string} groupId - The group ID.
- * @param {string} userLid - The user's Linked ID.
+ * @param {string} userId - The user's ID (should be normalized user_id).
  * @returns {Promise<object>} - The Anti-Link settings.
  */
-async function getAntiLinkSettingsCached(groupId, userLid) {
-    const cacheKey = `${groupId}:${userLid}`;
+async function getAntiLinkSettingsCached(groupId, userId) {
+    const normalizedUserId = normalizeUserId(userId);
+    const cacheKey = `${groupId}:${normalizedUserId}`;
     const cached = antilinkCache.get(cacheKey);
-    if (cached && (Date.now() - cached.timestamp < 10 * 60 * 1000)) return cached.data; // 10 min cache
-
-    const data = await getAntiLinkSettings(groupId, userLid); // original DB function
+    if (cached && (Date.now() - cached.timestamp < 10 * 60 * 1000)) return cached.data;
+    const data = await getAntiLinkSettings(groupId, normalizedUserId);
     antilinkCache.set(cacheKey, { data, timestamp: Date.now() });
     return data;
 }
@@ -112,12 +101,12 @@ async function getAntiLinkSettingsCached(groupId, userLid) {
  * Handle Anti-Link detection in a group.
  * @param {object} sock - The WhatsApp socket instance.
  * @param {object} message - The incoming message object.
- * @param {string} userLid - The user's Linked ID.
+ * @param {string} userId - The bot's user_id (normalized, as saved in DB).
  */
-const handleAntiLink = async (sock, message, userLid) => {
-    const chatId = message.key.remoteJid; // Group ID
-    const sender = message.key.participant || message.key.remoteJid; // Sender's ID
-    const messageId = message.key.id; // Extract the message ID
+const handleAntiLink = async (sock, message, userId) => {
+    const chatId = message.key.remoteJid;
+    const sender = message.key.participant || message.key.remoteJid;
+    const messageId = message.key.id;
 
     // Extract message content for all message types
     const msgText =
@@ -126,104 +115,80 @@ const handleAntiLink = async (sock, message, userLid) => {
         message.message?.imageMessage?.caption ||
         message.message?.videoMessage?.caption ||
         message.message?.documentMessage?.caption ||
-        ''; // Default to an empty string if no text is found
+        '';
 
-    // Fetch the bot owner's lid and id from memory or the users table
-    const botOwnerData = sock.user?.lid
-        ? { lid: sock.user.lid, id: sock.user.id }
-        : await getUserFromUsersTable(sock.user?.id);
+    // Fetch the bot owner's user_id and lid from memory or the users table
+    let botOwnerData = null;
+    if (sock.user?.user_id) {
+        botOwnerData = { user_id: sock.user.user_id, lid: sock.user.lid, id: sock.user.id };
+    } else if (sock.user?.id) {
+        // Normalize before lookup
+        const plainId = normalizeUserId(sock.user.id.split(':')[0]);
+        botOwnerData = await getUserFromUsersTable(plainId);
+    } else {
+        botOwnerData = null;
+    }
 
-    if (!botOwnerData || !botOwnerData.lid) {
-        console.error(`❌ Could not fetch bot owner's lid. Skipping Anti-Link processing.`);
+    if (!botOwnerData || (!botOwnerData.user_id && !botOwnerData.lid)) {
+        console.error(`❌ Could not fetch bot owner's user_id/lid. Skipping Anti-Link processing.`);
         return;
     }
 
-    const normalizedBotOwnerLid = normalizeUserId(botOwnerData.lid.split(':')[0]); // Normalize and remove suffix
-    const normalizedBotOwnerId = normalizeUserId(botOwnerData.id.split(':')[0]); // Normalize and remove suffix
-    // Normalize the sender's ID for comparison
+    const normalizedBotOwnerId = normalizeUserId(botOwnerData.user_id?.split(':')[0]);
+    const normalizedBotOwnerLid = normalizeUserId(botOwnerData.lid?.split(':')[0]);
+    const normalizedBotOwnerSockId = normalizeUserId(botOwnerData.id?.split(':')[0]);
     const normalizedSender = normalizeUserId(sender.split('@')[0]);
 
-    // Check if the sender is the bot owner
+    // Check if the sender is the bot owner (by user_id, lid, or id)
     if (
+        normalizedSender === normalizedBotOwnerId ||
         normalizedSender === normalizedBotOwnerLid ||
-        normalizedSender === normalizedBotOwnerId
+        normalizedSender === normalizedBotOwnerSockId
     ) {
         return; // Do not process messages sent by the bot owner
     }
 
-    const groupSettings = await getAntiLinkSettingsCached(chatId, userLid);
-    console.log(`🔍 Anti-Link enabled: ${groupSettings.antilink_enabled}`);
-
-    if (!groupSettings.antilink_enabled) {
-        return; // Anti-Link is disabled
-    }
+    // Always use normalized userId for settings
+    const groupSettings = await getAntiLinkSettingsCached(chatId, userId);
+    if (!groupSettings.antilink_enabled) return;
 
     // Check if the sender is bypassed
-    if (groupSettings.bypass_users?.includes(sender)) {
-        return;
-    }
+    if (groupSettings.bypass_users?.includes(sender)) return;
 
     // Check if the sender is an admin and bypass_admin is enabled
-    const isAdmin  =  await getGroupAdmins(sock, chatId);
-    
-
-    if (isAdmin && groupSettings.bypass_admin) {
-        return;
-    }
+    const isAdmin = await getGroupAdmins(sock, chatId);
+    if (isAdmin && groupSettings.bypass_admin) return;
 
     // Detect links
     if (linkRegex.test(msgText)) {
-        console.log(`✅ Link detected in message: "${msgText}"`);
-        // Delete the message
         await sock.sendMessage(chatId, { delete: message.key });
-        console.log(`⚠️ Message from ${sender} deleted in group: ${chatId} (link detected)`);
-
-        // Warn the user for posting a link
         try {
             const reason = 'Posting a prohibited link';
-            const warningCount = await warnUser(chatId, sender, reason, userLid);
-            console.log(`⚠️ User ${sender} warned for posting a link. Current warning count: ${warningCount}`);
-
-            // Fetch the group's warning threshold
-            const warningThreshold = await getWarningThreshold(chatId, userLid);
-            console.log(`🔍 Warning threshold for group ${chatId}: ${warningThreshold}`);
-
-            // Check if the user has exceeded the warning threshold
+            const warningCount = await warnUser(chatId, sender, reason, userId);
+            const warningThreshold = await getWarningThreshold(chatId, userId);
             if (warningCount >= warningThreshold) {
-                console.log(`🚨 User ${sender} has exceeded the warning threshold. Kicking from group ${chatId}...`);
-
-                // Kick the user from the group
                 await sock.groupParticipantsUpdate(chatId, [sender], 'remove');
-                console.log(`✅ User ${sender} removed from group ${chatId}.`);
-
-                // Reset the user's warnings after kicking
-                await resetWarnings(chatId, sender, userLid);
-                console.log(`♻️ Warnings for user ${sender} reset after removal.`);
+                await resetWarnings(chatId, sender, userId);
             } else {
-                // Warn the user in the group
                 const warningMessage = `⚠️ @${sender.split('@')[0]}, sharing links is not allowed in this group. You have ${warningCount}/${warningThreshold} warnings.`;
                 await sock.sendMessage(chatId, { text: warningMessage, mentions: [sender] });
-                console.log(`✅ Warning message sent to ${sender} in group ${chatId}.`);
             }
         } catch (error) {
             console.error(`❌ Failed to warn user ${sender} in group ${chatId}:`, error);
         }
-    } else {
-        console.log(`ℹ️ No link detected in message: "${msgText}"`);
     }
 
     // Track the deleted message
-    if (!deletedMessagesByBot[userLid]) {
-        deletedMessagesByBot[userLid] = new Set();
+    if (!deletedMessagesByBot[userId]) {
+        deletedMessagesByBot[userId] = new Set();
     }
-    deletedMessagesByBot[userLid].add(messageId);
-
-    console.log(`✅ Message ${messageId} deleted by bot instance ${userLid}.`);
+    deletedMessagesByBot[userId].add(messageId);
 };
 
 module.exports = {
     getUserFromUsersTable,
-    getAntiLinkSettings,
     updateAntiLinkSettings,
+    getAntiLinkSettings,
+    getAntiLinkSettingsCached,
     handleAntiLink,
 };

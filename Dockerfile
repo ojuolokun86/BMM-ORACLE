@@ -1,6 +1,11 @@
 # Use Node.js base image (21.x as per your engines)
 FROM node:21
 
+# Install ffmpeg and yt-dlp
+RUN apt-get update && \
+    apt-get install -y ffmpeg python3-pip && \
+    pip3 install -U yt-dlp
+
 # Create app directory
 WORKDIR /app
 

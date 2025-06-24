@@ -1,9 +1,8 @@
-const { makeWASocket, DisconnectReason, initAuthCreds, BufferJSON, proto, useMultiFileAuthState, } = require('@whiskeysockets/baileys');
+const { makeWASocket, DisconnectReason, useMultiFileAuthState, makeCacheableSignalKeyStore, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { botInstances, restartQueue, intentionalRestarts, lmSocketInstances, } = require('../utils/globalStore'); // Import the global botInstances object
 const initializeBot = require('../bot/bot'); // Import the bot initialization function
 const { addUser, deleteUserData } = require('../database/userDatabase'); // Import the addUser function
 const supabase = require('../supabaseClient');
-const firstTimeUsers = new Set(); // In-memory store to track first-time users
 const path = require('path');
 const fs = require('fs');
 const pino = require('pino');
@@ -12,8 +11,8 @@ const { useHybridAuthState } = require('../database/hybridAuthState');
 const { fetchWhatsAppWebVersion } = require('../utils/AppWebVersion'); // Import the function to fetch WhatsApp Web version
 const { listSessionsFromSupabase } = require('../database/models/supabaseAuthState'); // Import the function to list sessions from Supabase
 const QRCode = require('qrcode'); // Add this at the top of your file
-const { getSocketInstance, userSockets } = require('../server/socket');
-const { sessionExistsInDB } = require('../database/models/supabaseAuthState');
+const logger = pino();
+
 
 const sessionTimers = {};
 const cancelledSessions = new Set();
@@ -68,6 +67,7 @@ async function fullyStopSession(phoneNumber) {
 
         // Finally, delete the instance
         delete botInstances[phoneNumber];
+        await deleteUserData(phoneNumber); // Delete user data from the database
         console.log(`🗑️ Bot instance deleted for ${phoneNumber}`);
     } else {
         console.log(`ℹ️ No bot instance found for ${phoneNumber}`);
@@ -118,7 +118,7 @@ const saveUserInfo = async (sock, phoneNumber, authId, platform) => {
 function emitQr(authId, phoneNumber, qr) {
     // Always send to LM via WebSocket
     sendQrToLm({ authId, phoneNumber, pairingCode: formattedCode });
-    console.log(`📱 QR code sent to LM for user ${phoneNumber} with authId ${authId}`);
+    logger.info(`📱 QR code sent to LM for user ${phoneNumber} with authId ${authId}`);
 }
 const qrTimeouts = {};
 
@@ -129,7 +129,7 @@ let pairingAttempts = 0;
 const MAX_PAIRING_ATTEMPTS = 1; // Only try once per deploy
 const PAIRING_WINDOW = 120000; // 2 minutes
 const startNewSession = async (phoneNumber, io, authId, pairingMethod) => {
-    console.log(`🔄 Starting new session for phone: ${phoneNumber}, authId: ${authId}, pairingMethod: ${pairingMethod}`);
+    logger.info(`🔄 Starting new session for phone: ${phoneNumber}, authId: ${authId}, pairingMethod: ${pairingMethod}`);
     if (!phoneNumber || !authId) {
         console.error('❌ Cannot start session: phoneNumber or authId missing.');
         return { status: 'error', message: 'Phone number or Auth ID missing' };
@@ -143,21 +143,24 @@ const startNewSession = async (phoneNumber, io, authId, pairingMethod) => {
         } catch {}
         delete botInstances[phoneNumber];
     }
-    const  version  = await fetchWhatsAppWebVersion();
-    console.log(`🔄 Starting session for ${phoneNumber} with authId ${authId}`);
+    logger.info(`🔄 Starting session for ${phoneNumber} with authId ${authId}`);
     const { state, saveCreds } = await useHybridAuthState(phoneNumber, authId);
+    const { version } = await fetchLatestBaileysVersion(); // ✅ STEP 2
 
    const sock = makeWASocket({
-    version: await fetchWhatsAppWebVersion(),
-    auth: state,
+    version,
+      auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
+        },
     logger: pino({ level: 'silent' }),
-    browser: ['Linux', 'Edge', '110.0.5481.77'],
+    browser: ['Ubuntu', 'Chrome', '125.0.6422.112'],
     generateHighQualityLinkPreview: true,
     downloadHistory: true,
     syncFullHistory: true,
     forceWeb: true,
     forceWebReconnect: true,
-    markOnlineOnConnect: false,
+    markOnlineOnConnect: true,
     receivedPendingNotifications: true,
     keepAliveIntervalMs: 30000, // Ping WhatsApp every 30s
     connectTimeoutMs: 60000, // 60s timeout
@@ -170,43 +173,43 @@ const startNewSession = async (phoneNumber, io, authId, pairingMethod) => {
 });
 const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
     sock.ev.on('creds.update', saveCreds);
-    console.log(`🚀creds update`)
-    console.info("📦 Loaded state:", state?.creds?.registered);
+    logger.info(`🚀creds update`)
+    logger.info(`📦 Loaded state: ${state?.creds?.registered}`);
 
 
     // Connection Updates
     sock.ev.on('connection.update', async (update) => {
         lastEventTime = Date.now(); // Update last event time on any connection update
         const { connection, lastDisconnect, qr } = update;
-        console.log(`📶 Connection update for ${phoneNumber}:`, connection, update);
+        logger.info(`📶 Connection update for ${phoneNumber}:`, connection, update);
         // 2️⃣ On successful connection
       if (connection === 'open') {
      
         // 2️⃣ Mark as connected and store bot instance
-        console.log(`✅ Connected for ${phoneNumber}`);
+        logger.info(`✅ Connected for ${phoneNumber}`);
         botInstances[phoneNumber] = { sock, authId };
 
       
           // 3️⃣ Upload pre-keys to WhatsApp (ensures encryption is fresh)
         try {
-            console.log(`🔄 Uploading pre-keys for ${phoneNumber}`);
+            logger.info(`🔄 Uploading pre-keys for ${phoneNumber}`);
             await sock.uploadPreKeys();
             console.log(`✅ Pre-keys uploaded to WhatsApp for ${phoneNumber}`);
         } catch (err) {
-            console.warn(`⚠️ Failed to upload pre-keys:`, err.message);
+            logger.warn(`⚠️ Failed to upload pre-keys:`, err.message);
         }
 
         try {
             await sock.assertSessions([`${phoneNumber}@s.whatsapp.net`]);
             console.log(`✅ session assert  uploaded to WhatsApp for ${phoneNumber}`);
         } catch (error) {
-            console.warn(`⚠️ Failed to assert session:`, error.message);
+            logger.warn(`⚠️ Failed to assert session:`, error.message);
         }
         // 4️⃣ Initialize the bot logic for this user
         initializeBot(sock, phoneNumber);
 
         // 5️⃣ Save user info to database
-        console.log(`✅ Session saved for user ${phoneNumber} with authId ${authId}`);
+        logger.info(`✅ Session saved for user ${phoneNumber} with authId ${authId}`);
         try {
             // Check if user already exists in Supabase
             const { data: existingUser, error } = await supabase
@@ -216,12 +219,12 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
                 .single();
 
             if (error && error.code !== 'PGRST116') {
-                console.error('❌ Supabase error:', error);
+                logger.error('❌ Supabase error:', error);
             }
 
             // If first-time user, schedule a restart for full initialization
             if (!existingUser) {
-                console.log(`🎉 First-time user detected. Scheduling restart...`);
+                logger.info(`🎉 First-time user detected. Scheduling restart...`);
                 setTimeout(async () => {
                     const { restartUserBot } = require('../bot/restartBot');
                     await restartUserBot(phoneNumber, `${phoneNumber}@s.whatsapp.net`, authId);
@@ -230,7 +233,7 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
 
             await saveUserInfo(sock, phoneNumber, authId);
         } catch (err) {
-            console.error(`❌ Error during user info save/check:`, err);
+            logger.error(`❌ Error during user info save/check:`, err);
         }
 
         // 6️⃣ Notify user if in restartQueue
@@ -241,7 +244,7 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
                     { text: '*🤖 Congratulation YOU have successfuly registered the bot! connected to BMM Techitoon Bot 🚀*' }
                 );
             } catch (err) {
-                console.warn(`⚠️ Failed to send registration message:`, err.message);
+                logger.warn(`⚠️ Failed to send registration message:`, err.message);
             }
             delete restartQueue[phoneNumber];
         }
@@ -255,21 +258,21 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
 
     // 🟢 If this was an intentional restart, do nothing!
     if (intentionalRestarts.has(phoneNumber)) {
-        console.log(`🟢 Intentional restart for ${phoneNumber}, skipping auto-restart and cleanup.`);
+        logger.info(`🟢 Intentional restart for ${phoneNumber}, skipping auto-restart and cleanup.`);
         intentionalRestarts.delete(phoneNumber);
         return;
     }
 
     // ⚠️ Handle Baileys conflict (reason 440)
     if (reason === 440) {
-        console.warn(`⚠️ Conflict detected for ${phoneNumber}. Cleaning up this instance and NOT retrying.`);
+        logger.warn(`⚠️ Conflict detected for ${phoneNumber}. Cleaning up this instance and NOT retrying.`);
         if (botInstances[phoneNumber]) {
             try {
                 if (botInstances[phoneNumber].sock?.ws?.readyState === 1) {
                     await botInstances[phoneNumber].sock.ws.close();
                 }
             } catch (err) {
-                console.warn(`⚠️ Error closing socket for ${phoneNumber}:`, err.message);
+                logger.warn(`⚠️ Error closing socket for ${phoneNumber}:`, err.message);
             }
             delete botInstances[phoneNumber];
         }
@@ -297,16 +300,9 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
         case 405: // Custom code for "bad session"
             await fullyStopSession(phoneNumber);
             await deleteUserData(phoneNumber);
-            sendQrToLm({
-                authId,
-                phoneNumber,
-                status: 'failure',
-                message: '❌ Pairing failed or expired. Please redeploy the bot to get a new code.',
-                needsRescan: false,
-            });
             break;
         default:
-            console.warn(`⚠️ Unhandled disconnect reason for ${phoneNumber}: ${reason}`);
+            logger.warn(`⚠️ Unhandled disconnect reason for ${phoneNumber}: ${reason}`);
              setTimeout(() => startNewSession(phoneNumber, io, authId, pairingMethod), 5000);
             break;
     }

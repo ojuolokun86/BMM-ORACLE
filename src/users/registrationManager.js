@@ -1,9 +1,14 @@
-const { makeWASocket, initAuthCreds } = require('@whiskeysockets/baileys');
+const { makeWASocket, initAuthCreds, makeCacheableSignalKeyStore, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { sendQrToLm } = require('../server/lmSocketClient');
 const { saveSessionToSupabase } = require('../database/models/supabaseAuthState');
+const { deleteUserData } = require('../database/userDatabase');
 const { fullyStopSession } = require('./userSession');
 const pino = require('pino');
 const { useHybridAuthState } = require('../database/hybridAuthState');
+const logger = pino({
+  level: 'info', // or 'debug', 'error', etc.
+  timestamp: pino.stdTimeFunctions.isoTime,
+});
 
 // Minimal in-memory auth state for registration (no file, no DB)
 const inMemorySessions = {}; // <--- store by phoneNumber
@@ -53,36 +58,42 @@ async function registerUser(phoneNumber, io, authId, pairingMethod) {
     let registrationStopped = false;
     // Use hybrid auth state for robust registration
     const { state, saveCreds } = await useHybridAuthState(phoneNumber, authId);
+    const { version } = await fetchLatestBaileysVersion(); // ✅ STEP 2
 
     async function startRegistrationSocket() {
         const sock = makeWASocket({
+            version,
             logger: pino({ level: 'silent' }),
-            browser: ['Linux', 'Edge', '110.0.5481.77'],
+            browser: ['Ubuntu', 'Chrome', '125.0.6422.112'],
             printQRInTerminal: false,
-            auth: state
+             auth: {
+                        creds: state.creds,
+                        keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
+                    },
         });
         sock.ev.on('creds.update', saveCreds);
 
         sock.ev.on('connection.update', async (update) => {
             if (registrationStopped) return;
             const { connection, qr, lastDisconnect, isNewLogin } = update;
-            console.log(`🔄 [REGISTRATION] Connection update for ${phoneNumber}:`, update);
-            console.log('[DEBUG] creds.registered:', sock.authState?.creds?.registered, 'isNewLogin:', isNewLogin);
+            logger.info(`🔄 [REGISTRATION] Connection update for ${phoneNumber}:`, update);
+            logger.debug('creds.registered:', sock.authState?.creds?.registered, 'isNewLogin:', isNewLogin);
 
             if (!registered && qr && pairingMethod === 'pairingCode' && !pairingCodeSent) {
                 pairingCodeSent = true;
                 try {
                     const code = await sock.requestPairingCode(phoneNumber);
                     const formattedCode = code.match(/.{1,4}/g).join('-');
-                    console.log(`📱 [REGISTRATION] Sending pairing code to LM: ${formattedCode}`);
+                    logger.info(`📱 [REGISTRATION] Sending pairing code to LM: ${formattedCode}`);
                     sendQrToLm({ authId, phoneNumber, pairingCode: formattedCode });
                     pairingTimeout = setTimeout(async () => {
-                        console.warn(`⏰ [REGISTRATION] Timeout for ${phoneNumber}`);
+                        logger.warn(`⏰ [REGISTRATION] Timeout for ${phoneNumber}`);
                         await fullyStopSession(phoneNumber);
+                        await deleteUserData(phoneNumber);
                           try {
                                 await sock.ws.close();
                                 sock.ev.removeAllListeners(); // Clean up listeners
-                                console.log(`✅ [REGISTRATION] Registration socket closed for ${phoneNumber}`);
+                                logger.info(`✅ [REGISTRATION] Registration socket closed for ${phoneNumber}`);
                             } catch (e) {
                                 console.warn(`⚠️ Error closing registration socket:`, e.message);
                             }
@@ -104,14 +115,16 @@ async function registerUser(phoneNumber, io, authId, pairingMethod) {
                         needsRescan: true,
                     });
                     await fullyStopSession(phoneNumber);
+                    await deleteUserData(phoneNumber);
                     return;
                 }
             } else if (!registered && qr && pairingMethod === 'qrCode') {
                 sendQrToLm({ authId, phoneNumber, qr });
                 if (!pairingTimeout) {
                     pairingTimeout = setTimeout(async () => {
-                        console.warn(`⏰ [REGISTRATION] Timeout for ${phoneNumber}`);
+                       logger.warn(`⏰ [REGISTRATION] Timeout for ${phoneNumber}`);
                         await fullyStopSession(phoneNumber);
+                        await deleteUserData(phoneNumber);
                         sendQrToLm({
                             authId,
                             phoneNumber,
@@ -126,7 +139,7 @@ async function registerUser(phoneNumber, io, authId, pairingMethod) {
             // Only proceed when registered!
            if (connection === 'open' && !registrationDone) {
             registrationDone = true;
-            console.log(`✅ [REGISTRATION] Connection open for ${phoneNumber}`);
+            logger.info(`✅ [REGISTRATION] Connection open for ${phoneNumber}`);
             if (pairingTimeout) clearTimeout(pairingTimeout);
             await saveCreds();
 
@@ -134,7 +147,7 @@ async function registerUser(phoneNumber, io, authId, pairingMethod) {
             try {
                 await sock.ws.close();
                 sock.ev.removeAllListeners(); // Clean up listeners
-                console.log(`✅ [REGISTRATION] Registration socket closed for ${phoneNumber}`);
+                logger.info(`✅ [REGISTRATION] Registration socket closed for ${phoneNumber}`);
             } catch (e) {
                 console.warn(`⚠️ Error closing registration socket:`, e.message);
             }
@@ -162,7 +175,7 @@ async function registerUser(phoneNumber, io, authId, pairingMethod) {
                     errorMsg.includes('restart required') ||
                     errorMsg.includes('Stream Errored (restart required)')
                 ) {
-                    console.log(`🔄 [REGISTRATION] Restarting registration socket for ${phoneNumber} (restart required)`);
+                    logger.info(`🔄 [REGISTRATION] Restarting registration socket for ${phoneNumber} (restart required)`);
                     setTimeout(() => startRegistrationSocket(), 5000);
                 } else if (
                     errorMsg.includes('QR refs attempts ended')
@@ -178,6 +191,7 @@ async function registerUser(phoneNumber, io, authId, pairingMethod) {
                     });
                     // Optionally: fully stop session
                     await fullyStopSession(phoneNumber);
+                    await deleteUserData(phoneNumber);
                     // Do NOT restart registration
                 } else {
                     // For other errors, you can decide to stop or restart as needed
@@ -196,6 +210,7 @@ async function registerUser(phoneNumber, io, authId, pairingMethod) {
                         if (sock && sock.ws) sock.ws.close();
                     }
                     await fullyStopSession(phoneNumber);
+                    await deleteUserData(phoneNumber);
                     // Do NOT restart registration
                 }
             }

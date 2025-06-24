@@ -1,0 +1,90 @@
+[
+  {
+    "country": "Nigeria",
+    "timezones": ["Africa/Lagos"]
+  },
+  {
+    "country": "India",
+    "timezones": ["Asia/Kolkata"]
+  },
+  {
+    "country": "United States",
+    "timezones": [
+      "America/New_York",
+      "America/Chicago",
+      "America/Denver",
+      "America/Los_Angeles"
+    ]
+  },
+  {
+    "country": "United Kingdom",
+    "timezones": ["Europe/London"]
+  },
+  {
+    "country": "Canada",
+    "timezones": [
+      "America/Toronto",
+      "America/Vancouver"
+    ]
+  },
+  {
+    "country": "Germany",
+    "timezones": ["Europe/Berlin"]
+  },
+  {
+    "country": "France",
+    "timezones": ["Europe/Paris"]
+  },
+  {
+    "country": "Japan",
+    "timezones": ["Asia/Tokyo"]
+  },
+  {
+    "country": "China",
+    "timezones": ["Asia/Shanghai"]
+  },
+  {
+    "country": "Brazil",
+    "timezones": ["America/Sao_Paulo"]
+  },
+  {
+    "country": "Russia",
+    "timezones": ["Europe/Moscow"]
+  },
+  {
+    "country": "South Africa",
+    "timezones": ["Africa/Johannesburg"]
+  },
+  {
+    "country": "Ghana",
+    "timezones": ["Africa/Accra"]
+  },
+  {
+    "country": "Kenya",
+    "timezones": ["Africa/Nairobi"]
+  },
+  {
+    "country": "Egypt",
+    "timezones": ["Africa/Cairo"]
+  },
+  {
+    "country": "Australia",
+    "timezones": ["Australia/Sydney"]
+  },
+  {
+    "country": "Mexico",
+    "timezones": ["America/Mexico_City"]
+  },
+  {
+    "country": "Argentina",
+    "timezones": ["America/Argentina/Buenos_Aires"]
+  },
+  {
+    "country": "South Korea",
+    "timezones": ["Asia/Seoul"]
+  },
+  {
+    "country": "Turkey",
+    "timezones": ["Europe/Istanbul"]
+  }
+]

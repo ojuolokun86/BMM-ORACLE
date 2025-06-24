@@ -4,6 +4,7 @@ const { formatResponse } = require('../utils/utils');
 
 const groupStats = {}; // In-memory cache
 const groupDailyStats = {}; // { [groupId]: { [YYYY-MM-DD]: count } }
+const processedMessages = {};
 
 // Load all stats for a group from DB into cache
 async function loadGroupStatsFromDB(groupId) {
@@ -23,7 +24,10 @@ async function loadGroupStatsFromDB(groupId) {
 }
 
 // Increment stat in cache and DB, and update daily stats
-async function incrementGroupUserStat(groupId, userId, name) {
+async function incrementGroupUserStat(groupId, userId, name, messageId) {
+     if (!processedMessages[groupId]) processedMessages[groupId] = new Set();
+    if (processedMessages[groupId].has(messageId)) return; // Already counted
+     processedMessages[groupId].add(messageId);
     if (!groupStats[groupId]) await loadGroupStatsFromDB(groupId);
     if (!groupStats[groupId]) groupStats[groupId] = {};
     if (!groupStats[groupId][userId]) groupStats[groupId][userId] = { name, messageCount: 0, lastMessageTime: null };

@@ -166,8 +166,6 @@ const getAllUsers = async () => {
            console.log(`⚠️ User with ID ${normalizedUserId} not found in users table.`);
            return null;
        }
-   
-       console.log(`✅ User fetched from users table:`, data);
        return data;
    };
 

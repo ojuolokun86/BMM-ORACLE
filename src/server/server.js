@@ -4,8 +4,8 @@ console.log = function () {};
 //     console.log = function () {};
 // }
 const events = require('events');
-events.EventEmitter.defaultMaxListeners = 50;
-console.log('🔧 Increased default max listeners to 50 for EventEmitter');
+events.EventEmitter.defaultMaxListeners = 70;
+console.log('🔧 Increased default max listeners to 70 for EventEmitter');
 const express = require('express');
 require('dotenv').config();
 const http = require('http');
@@ -119,13 +119,13 @@ const createServer = () => {
 
     // Continue with registration...
     try {
-        console.log('🚦 [start-session] Calling startNewSession...');
-        const { startNewSession,} = require('../users/userSession');
-        await startNewSession(phoneNumber, io, authId, pairingMethod,);
+        console.log('🚦 [start-session] Calling registerUser...');
+        const { registerUser,} = require('../users/registrationManager');
+        await registerUser(phoneNumber, io, authId, pairingMethod);
         console.log('✅ [start-session] Session started successfully.');
         return res.status(200).json({ message: 'Session started. Please scan the QR code.' });
     } catch (err) {
-        console.error('❌ [start-session] Error in startNewSession:', err);
+        console.error('❌ [start-session] Error in registerUser:', err);
         return res.status(500).json({ error: 'Failed to start session.', details: err.message });
     }
 });
