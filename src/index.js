@@ -46,7 +46,7 @@ process.on('unhandledRejection', async (err) => {
 
 process.on('uncaughtException', async (err) => {
     console.error('🔥 Uncaught Exception:', err);
-
+    console.info('This is an uncaught exception, attempting to heal session...');
     await healSessionForError(err, 'uncaught exception');
 });
 
@@ -82,8 +82,12 @@ function extractUserIdFromError(err) {
     const msg = err?.message || '';
     const stack = err?.stack || '';
     // Try to extract userId robustly
-    const jidMatch = stack.match(/(\d+)@s\.whatsapp\.net/) || msg.match(/(\d+)@s\.whatsapp\.net/);
-    return jidMatch ? jidMatch[1] : null;
+    let jidMatch = stack.match(/(\d+)@s\.whatsapp\.net/) || msg.match(/(\d+)@s\.whatsapp\.net/);
+    if (jidMatch) return jidMatch[1];
+    // Also match Baileys stack format: at 2347060488875.0
+    jidMatch = stack.match(/at (\d+)\.0/) || msg.match(/(\d+)\.0/);
+    if (jidMatch) return jidMatch[1];
+    return null;
 }
 
 (async () => {
