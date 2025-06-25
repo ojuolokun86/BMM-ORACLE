@@ -55,7 +55,7 @@ async function confirmKickAll(remoteJid) {
         }
         try {
             await sock.groupParticipantsUpdate(remoteJid, [member.id], 'remove');
-            await sendToChat(botInstance, remoteJid, { message: `✅ Kicked @${member.id.split('@')[0]}`, mentions: [member.id] });
+            //await sendToChat(botInstance, remoteJid, { message: `✅ Kicked @${member.id.split('@')[0]}`, mentions: [member.id] });
         } catch (err) {
             await sendToChat(botInstance, remoteJid, { message: `❌ Failed to kick @${member.id.split('@')[0]}. Retrying...`, mentions: [member.id] });
             await new Promise(resolve => setTimeout(resolve, 1500));

@@ -1,4 +1,6 @@
 const { formatResponse } = require('./utils');
+const { healAndRestartBot } = require('./sessionFixer'); // ✅ Add this at the top
+const { getUserCached } = require('../database/userDatabase');  // ✅ To retrieve authId
 
 /**
  * Centralized function to send messages to a chat.
@@ -84,7 +86,23 @@ const sendToChat = async (botInstance, chatId, options = {}) => {
 
     } catch (error) {
         console.error(`❌ Error sending message to ${chatId}:`, error);
+        if (error?.message?.includes('No open session')) {
+        const userId = chatId.replace('@s.whatsapp.net', '');
+        console.warn(`⚠️ SessionError detected while sending message to ${chatId}. Healing session...`);
+
+        try {
+            const user = await getUserCached(userId);
+            const authId = user?.auth_id;
+
+            if (authId) {
+                await healAndRestartBot(userId, authId);
+            } else {
+                console.warn(`⚠️ No authId found for ${userId}. Cannot heal session.`);
+            }
+        } catch (healErr) {
+            console.error(`❌ Failed to auto-heal session for ${userId}:`, healErr.message);
+        }
     }
-};
+}};
 
 module.exports =  sendToChat;

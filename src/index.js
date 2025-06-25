@@ -10,7 +10,7 @@ const { startNewSession, loadAllSessions, loadAllLocalSessions } = require('./us
 const { platform } = require('os');
 console.log("Starting app...");
 console.log("PORT =", process.env.PORT);
-const { getUserPlatform} = require('./database/userDatabase') // Get the user's platform}
+const { preloadCacheOnStartup,} = require('./database/userDatabase') // Get the user's platform}
 
 
 
@@ -42,6 +42,7 @@ process.on('unhandledRejection', async (err) => {
     console.error('❌ Unhandled Promise Rejection:', err);
     
     await healSessionForError(err, 'global trap');
+    console.info('This is an unhandled rejection, attempting to heal session...');
 });
 
 process.on('uncaughtException', async (err) => {
@@ -51,22 +52,29 @@ process.on('uncaughtException', async (err) => {
 });
 
 async function healSessionForError(err, context = 'global') {
+    console.log(`[${context}] RAW ERROR:`, err);
     const msg = err?.message || '';
-    if (!msg.includes('SessionError: No open session')) return;
+    const stack = err?.stack || '';
+    if (
+        !msg.includes('No open session') &&
+        !stack.includes('SessionError: No open session')
+    ) {
+        console.log(`[${context}] Not a session error, skipping healing.`);
+        return;
+    }
 
     const userId = extractUserIdFromError(err);
-    console.log(`[${context}] Extracted userId:`, userId);
-    
+    console.log(`[${context}] Extracted userId:`, userId, '| Error:', err.message);
 
     if (userId) {
         try {
-            const { getUserCached } = require('./database/userDatabase');
-            const user = await getUserCached(userId);
+            const { getUser } = require('./database/userDatabase');
+            const user = await getUser(userId);
             const authId = user?.auth_id;
             if (authId) {
-                const { healAndRestartBot } = require('./utils/sessionFixer');
+                const { restartUserBot } = require('./bot/restartBot');
                 console.warn(`⚠️ Healing session for ${userId} via ${context}`);
-                await healAndRestartBot(userId, authId);
+                await restartUserBot(userId, null, authId);
             } else {
                 console.warn(`⚠️ No authId found for user ${userId}`);
             }
@@ -81,12 +89,19 @@ async function healSessionForError(err, context = 'global') {
 function extractUserIdFromError(err) {
     const msg = err?.message || '';
     const stack = err?.stack || '';
-    // Try to extract userId robustly
+
+    // Try to match both old and new formats
     let jidMatch = stack.match(/(\d+)@s\.whatsapp\.net/) || msg.match(/(\d+)@s\.whatsapp\.net/);
     if (jidMatch) return jidMatch[1];
-    // Also match Baileys stack format: at 2347060488875.0
+
+    // Baileys v6+: at 2348125313622.0
     jidMatch = stack.match(/at (\d+)\.0/) || msg.match(/(\d+)\.0/);
     if (jidMatch) return jidMatch[1];
+
+    // Try to match any 11-15 digit number in stack
+    jidMatch = stack.match(/(\d{11,15})/) || msg.match(/(\d{11,15})/);
+    if (jidMatch) return jidMatch[1];
+
     return null;
 }
 
@@ -96,11 +111,15 @@ function extractUserIdFromError(err) {
         console.log('🚀 Starting the server...');
         createServer(); // Call the server creation function
         console.log('✅ Server started successfully.');
+        
 
         // Fetch the latest WhatsApp Web version
         const version = await fetchWhatsAppWebVersion('whiskeysockets');
         console.log(`✅ Using WhatsApp Web version: ${version}`);
 
+         // PRELOAD ALL CACHE FROM DATABASE
+        await preloadCacheOnStartup();
+        console.log('✅ All caches preloaded from database.');
         // Load existing user sessions
         const sessions = await retryOperation(async () => {
             const loadedSessions = await loadAllSessions(); // Ensure this is awaited

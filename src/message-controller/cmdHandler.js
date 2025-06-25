@@ -115,13 +115,30 @@ if (
             const ownerName = (sock.user && (sock.user.name || sock.user.pushName)) || 'lash man';
             await menu(sock, remoteJid, message, userPrefix, ownerName);
             return;
+
+            case 'kick':
+    // Check if this is a reply or mentions a user
+    const isReply = !!(message.message?.extendedTextMessage?.contextInfo?.stanzaId);
+    const hasMention = !!(message.message?.extendedTextMessage?.contextInfo?.mentionedJid?.length);
+
+    if (isReply || hasMention) {
+        // Route to groupCommand.js for admin kick
+        console.log(`📢 Routing "kick" to groupCommand.js (admin kick)...`);
+        const handled = await handleGroupCommand(sock, userId, message, command, args, sender, null, botInstance, true);
+        if (handled) return;
+    } else {
+        // Route to funCommand.js for fun kick
+        console.log(`🎉 Routing "kick" to funCommand.js (fun kick)...`);
+        const funHandled = await handleFunCommand(sock, message, command, args, userId, remoteJid, botInstance);
+        if (funHandled) return;
+    }
+    break;
         case 'poll':
             case 'endpoll':
             case 'announce':
             case 'tagall':
             case 'admin':
             case 'add':
-            case 'kick':
             case 'promote':
             case 'demote':
             case 'kickall':
@@ -161,6 +178,7 @@ if (
                 break;
            // Handle general commands
             case 'ping':
+                case 'alive':
                 case 'menu':
                 case 'info':
                 case 'about':
@@ -202,7 +220,6 @@ if (
                         case 'happy':
                         case 'highfive':
                         case 'hug':
-                        case 'kick':
                         case 'kill':
                         case 'kiss':
                         case 'laugh':

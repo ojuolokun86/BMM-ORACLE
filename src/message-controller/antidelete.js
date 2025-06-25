@@ -256,5 +256,6 @@ module.exports = {
     setGlobalAntideleteForDMs,
     setChatAntidelete,
     handleAntideleteSave,
+    getAntideleteSettingsCached,
 };
 

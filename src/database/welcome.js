@@ -1,4 +1,5 @@
 const supabase = require('../supabaseClient');
+const welcomeCache = new Map(); // key: `${groupId}:${botInstanceId}`
 
 /**
  * Enable or disable the welcome message for a group.
@@ -63,8 +64,20 @@ const getWelcomeSettings = async (groupId, botInstanceId) => {
     console.log(`✅ Fetched welcome settings:`, data);
     return data || { is_enabled: false, welcome_message: null };
 };
+
+async function getWelcomeSettingsCached(groupId, botInstanceId) {
+    const cacheKey = `${groupId}:${botInstanceId}`;
+    const cached = welcomeCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < 10 * 60 * 1000)) return cached.data; // 10 min cache
+
+    const data = await getWelcomeSettings(groupId, botInstanceId);
+    welcomeCache.set(cacheKey, { data, timestamp: Date.now() });
+    return data;
+}
+
 module.exports = {
     setWelcomeStatus,
     setWelcomeMessage,
     getWelcomeSettings,
+    getWelcomeSettingsCached, // export the cached version
 };

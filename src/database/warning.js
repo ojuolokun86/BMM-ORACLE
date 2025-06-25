@@ -233,6 +233,18 @@ const deleteOldWarnings = async () => {
 // Schedule the task to run daily
 setInterval(deleteOldWarnings, 24 * 60 * 60 * 1000); // Run every 24 hours
 
+const warningThresholdCache = new Map(); // key: `${groupId}:${botInstanceId}`
+
+async function getWarningThresholdCached(groupId, botInstanceId) {
+    const cacheKey = `${groupId}:${botInstanceId}`;
+    const cached = warningThresholdCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < 10 * 60 * 1000)) return cached.data;
+
+    const threshold = await getWarningThreshold(groupId, botInstanceId);
+    warningThresholdCache.set(cacheKey, { data: threshold, timestamp: Date.now() });
+    return threshold;
+}
+
 module.exports = {
     warnUser,
     resetWarnings,
@@ -241,4 +253,5 @@ module.exports = {
     getWarningThreshold,
     setWarningThreshold,
     deleteOldWarnings, // Export the function for testing or manual execution
+    getWarningThresholdCached,
 };

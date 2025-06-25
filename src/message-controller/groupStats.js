@@ -236,5 +236,6 @@ module.exports = {
     handleGroupStatsCommand,
     loadGroupStatsFromDB,
     handleActiveMembersCommand,
-    handleInactiveMembersCommand
+    handleInactiveMembersCommand,
+    groupStats,
 };

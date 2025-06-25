@@ -6,6 +6,7 @@ const formatResponseCache = new Map(); // key: userId
 const userCache = new Map(); // key: userId
 const groupModeCache = new Map(); // key: `${userId}:${groupId}`
 const statusSettingsCache = new Map(); // key: userId
+const groupOnlyModeCache = new Map();
 
 module.exports = { 
     antilinkCache, 
@@ -16,4 +17,5 @@ module.exports = {
     userCache,
     groupModeCache,
     statusSettingsCache,
+    groupOnlyModeCache,
 };

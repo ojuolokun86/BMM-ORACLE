@@ -55,19 +55,23 @@ async function fetchGiphyActionGif(action) {
             params: {
                 api_key: 'C5XVeQxRFvdVEXvO1qKN33E7cmvQss2n',
                 q: action,
-                limit: 1,
+                limit: 20, // more results = more variety
                 rating: 'g'
             }
         });
         if (!res.data.data.length) return null;
-        const gifUrl = res.data.data[0].images.original.url;
+
+        const randomGif = res.data.data[Math.floor(Math.random() * res.data.data.length)];
+        const gifUrl = randomGif.images.original.url;
         const imgRes = await axios.get(gifUrl, { responseType: 'arraybuffer' });
+
         return Buffer.from(imgRes.data);
     } catch (err) {
         console.error('Giphy fetch error:', err);
         return null;
     }
 }
+
 
 function enhancePrompt(prompt) {
     const qualityEnhancers = ['high quality', 'detailed', 'masterpiece', 'ultra realistic', '4k', 'sharp focus'];
@@ -79,20 +83,17 @@ function enhancePrompt(prompt) {
 async function handleFunAction(sock, message, command, args, remoteJid, botInstance) {
     const target = getTargetUser(message, args);
     const senderId = message.key.participant || message.key.remoteJid;
-    const senderTag = `@${senderId.split('@')[0]}`;
-    const targetTag = target ? `@${target.split('@')[0]}` : 'someone';
-    const text = `🔸 ${senderTag} ${command}s ${targetTag}!`;
     const mentions = target ? [senderId, target] : [senderId];
 
     const gifBuffer = await fetchGiphyActionGif(command);
     if (!gifBuffer) {
-        await sendToChat(botInstance, remoteJid, { message: text, mentions, quotedMessage: message });
+        // Optionally, you can send an error message here if you want
         return;
     }
 
     const webpBuffer = await gifToAnimatedStickerBuffer(gifBuffer);
     await sock.sendMessage(remoteJid, { sticker: webpBuffer, mentions }, { quoted: message });
-    await sendToChat(botInstance, remoteJid, { message: text, mentions, quotedMessage: message });
+    // Removed: await sendToChat(botInstance, remoteJid, { message: text, mentions, quotedMessage: message });
 }
 
 const handleFunCommand = async (sock, message, command, args, userId, remoteJid, botInstance) => {

@@ -11,10 +11,10 @@ async function requestKickInactiveConfirmation(sock, remoteJid, botInstance, use
     const participants = groupMetadata.participants;
 
     // Get inactive members using your groupStats logic
-    const statsModule = require('./groupStats');
-    if (!statsModule.groupStats[remoteJid]) await statsModule.loadGroupStatsFromDB(remoteJid);
-    const stats = statsModule.getGroupStats(remoteJid);
-
+   const statsModule = require('./groupStats');
+if (!statsModule.groupStats) statsModule.groupStats = {};
+if (!statsModule.groupStats[remoteJid]) await statsModule.loadGroupStatsFromDB(remoteJid);
+const stats = statsModule.getGroupStats(remoteJid);
     const now = Date.now();
     const activeThreshold = 7 * 24 * 60 * 60 * 1000; // 7 days
     const inactiveMembers = participants.filter(participant => {
@@ -67,7 +67,7 @@ async function confirmKickInactive(remoteJid) {
         }
         try {
             await sock.groupParticipantsUpdate(remoteJid, [member.id], 'remove');
-            await sendToChat(botInstance, remoteJid, { message: `✅ Kicked @${member.id.split('@')[0]}`, mentions: [member.id] });
+            //await sendToChat(botInstance, remoteJid, { message: `✅ Kicked @${member.id.split('@')[0]}`, mentions: [member.id] });
         } catch (err) {
             await sendToChat(botInstance, remoteJid, { message: `❌ Failed to kick @${member.id.split('@')[0]}. Retrying...`, mentions: [member.id] });
             await new Promise(resolve => setTimeout(resolve, 1500));

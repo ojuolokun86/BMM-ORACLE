@@ -205,13 +205,6 @@ module.exports = async (sock, userId, version) => {
     console.log(`🤖🤖 Bot instance initialized for user: ${userId} using WhatsApp Web version: ${version}`);
     // Listen for incoming messages
     sock.ev.on('messages.upsert', async (messageUpdate) => {
-        phoneNumber = sock.user.id.split('@')[0].split(':')[0]; // Extract phone number from user ID
-        try {
-            await sock.assertSessions([`${phoneNumber}@s.whatsapp.net`]);
-            console.log(`✅ session assert  uploaded to WhatsApp for ${phoneNumber}`);
-        } catch (error) {
-            console.warn(`⚠️ Failed to assert session:`, error.message);
-        }
         const startTime = Date.now();
         console.log(`📥 New message received for user: ${userId}`);
     try {

@@ -1221,7 +1221,7 @@ const handleGroupCommand = async (sock, userId, message, command, args, sender, 
                                                             await sendToChat(botInstance, remoteJid, { message: '❌ The bot must be an admin to destroy the group.' });
                                                             return true;
                                                         }
-                                                        await requestDestroyGroupConfirmation(sock, remoteJid, botInstance, userId);
+                                                        await requestDestroyGroupConfirmation(sock, remoteJid, botInstance, userId, message);
                                                         return true;
                                                     }
                                                     break;

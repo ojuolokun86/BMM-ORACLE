@@ -8,7 +8,7 @@ const { botInstances } = require('../utils/globalStore'); // Import the bot inst
 const { deleteUserMetrics } = require('./models/metrics'); // Import the in-memory metrics map
 const { sessionTimers } = require('../utils/globalStore'); // Import your timers map
 const globalStore = require('../utils/globalStore');
-const { subscriptionLevelCache, userCache, groupModeCache, statusSettingsCache} = require('../utils/settingsCache');
+const { subscriptionLevelCache, userCache, groupModeCache, groupOnlyModeCache, statusSettingsCache} = require('../utils/settingsCache');
 
 
 /**
@@ -606,6 +606,66 @@ const getUserSubscriptionLevel = async (authId) => {
     }
 };
 
+async function preloadCacheOnStartup() {
+    try {
+        // 1. Preload all users
+        const { data: users, error: usersError } = await supabase
+            .from('users')
+            .select('*');
+        if (usersError) {
+            console.error('❌ Error preloading users:', usersError);
+        } else if (users && Array.isArray(users)) {
+            users.forEach(user => {
+                userCache.set(user.user_id, { data: user, timestamp: Date.now() });
+            });
+            console.log(`✅ Preloaded ${users.length} users into cache.`);
+        }
+
+        // 2. Preload all group modes
+         const { data: groupModes, error: groupModesError } = await supabase
+            .from('group_modes')
+            .select('*');
+        if (groupModes && Array.isArray(groupModes)) {
+            groupModes.forEach(mode => {
+                groupModeCache.set(`${mode.user_id}:${mode.group_id}`, { data: mode.mode, timestamp: Date.now() });
+                groupOnlyModeCache.set(mode.group_id, { data: mode.mode, timestamp: Date.now() });
+            });
+                console.log(`✅ Preloaded ${groupModes.length} group modes into both caches.`);
+            }
+
+        // 3. Preload all user status settings
+        const { data: statusSettings, error: statusSettingsError } = await supabase
+            .from('users')
+            .select('user_id, status_seen, status_react');
+        if (statusSettingsError) {
+            console.error('❌ Error preloading status settings:', statusSettingsError);
+        } else if (statusSettings && Array.isArray(statusSettings)) {
+            statusSettings.forEach(row => {
+                statusSettingsCache.set(row.user_id, { data: { status_seen: row.status_seen, status_react: row.status_react }, timestamp: Date.now() });
+            });
+            console.log(`✅ Preloaded ${statusSettings.length} user status settings into cache.`);
+        }
+
+        // 4. Preload all subscription levels
+        const { data: tokens, error: tokensError } = await supabase
+            .from('subscription_tokens')
+            .select('user_auth_id, subscription_level');
+        if (tokensError) {
+            console.error('❌ Error preloading subscription tokens:', tokensError);
+        } else if (tokens && Array.isArray(tokens)) {
+            tokens.forEach(token => {
+                subscriptionLevelCache.set(token.user_auth_id, { data: token.subscription_level, timestamp: Date.now() });
+            });
+            console.log(`✅ Preloaded ${tokens.length} subscription tokens into cache.`);
+        }
+
+    } catch (err) {
+        console.error('❌ Error during cache preload:', err);
+    }
+}
+
+
+
 async function getUserSubscriptionLevelCached(authId) {
     if (!authId) return 'free';
     const cached = subscriptionLevelCache.get(authId);
@@ -673,8 +733,53 @@ async function updateUserStatusSettingsCached(userId, settings) {
     statusSettingsCache.set(userId, { data: merged, timestamp: Date.now() });
 }
 
+async function preloadUserCache(userId, authId, botInstanceId) {
+    try {
+        // 1. User info
+        const user = await getUser(userId, undefined, undefined, authId);
+        if (user) userCache.set(userId, { data: user, timestamp: Date.now() });
+
+        // 2. Status settings
+        const statusSettings = await getUserStatusSettings(userId);
+        statusSettingsCache.set(userId, { data: statusSettings, timestamp: Date.now() });
+
+        // 3. Subscription level
+        if (user?.auth_id) {
+            const level = await getUserSubscriptionLevel(user.auth_id);
+            subscriptionLevelCache.set(user.auth_id, { data: level, timestamp: Date.now() });
+        }
+
+        // 4. Group modes (for all groups this user is in)
+        const { data: groupModes, error: groupModesError } = await supabase
+            .from('group_modes')
+            .select('*')
+            .eq('user_id', userId);
+        if (groupModes && Array.isArray(groupModes)) {
+            for (const mode of groupModes) {
+                groupModeCache.set(`${mode.user_id}:${mode.group_id}`, { data: mode.mode, timestamp: Date.now() });
+                groupOnlyModeCache.set(mode.group_id, { data: mode.mode, timestamp: Date.now() });
+
+                // Preload antilink and antidelete for each group
+                const { getAntiLinkSettingsCached } = require('../message-controller/antilink');
+                await getAntiLinkSettingsCached(mode.group_id, userId);
+
+                const { getAntideleteSettingsCached } = require('../message-controller/antidelete');
+                if (botInstanceId) {
+                    await getAntideleteSettingsCached(mode.group_id, botInstanceId);
+                }
+            }
+        }
+
+        console.log(`✅ Preloaded cache for user ${userId} (and their groups) after restart.`);
+    } catch (err) {
+        console.error(`❌ Error preloading cache for user ${userId}:`, err);
+    }
+}
+
+
 module.exports = {
     getUser,
+    preloadUserCache,
     addUser,
     getAllUsers,
     deleteUser,
@@ -695,4 +800,5 @@ module.exports = {
     getGroupModeCached,
     getUserStatusSettingsCached,
     updateUserStatusSettingsCached,
+    preloadCacheOnStartup,
 };

@@ -1,13 +1,12 @@
-console.log = function () {};
-// Suppress console logs in production
-// if (process.env.NODE_ENV === 'production') {
-//     console.log = function () {};
-// }
+require('dotenv').config();
+if (process.env.NODE_ENV === 'production') {
+    console.log = function () {};
+}
 const events = require('events');
 events.EventEmitter.defaultMaxListeners = 70;
 console.log('🔧 Increased default max listeners to 70 for EventEmitter');
 const express = require('express');
-require('dotenv').config();
+
 const http = require('http');
 const bodyParser = require('body-parser');
 const cors = require('cors');

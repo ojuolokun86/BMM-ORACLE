@@ -1,4 +1,5 @@
 const { cancelKickAll } = require("../message-controller/kickAll");
+const { groupKickInactiveState } = require("./globalStore");
 
 const commandEmojis = {
     // General Commands
@@ -114,6 +115,8 @@ const commandEmojis = {
     yeet: '🥏',
     shoot: '🔫',
     baka: '😂',
+    kickinactive: '🚷',
+    alive: '💚',
 
     // Mini-games & fun
     flip: '🪙',

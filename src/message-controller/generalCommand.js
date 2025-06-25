@@ -14,6 +14,7 @@ const { handleAiCommand } = require('../utils/ai'); // Import the AI command han
 
 const { handleStatusCommand } = require('./statusView'); // Import the status command handler
 const handleListGroups = require('./listGroups');
+const aliveCommand = require('./alive');
 
 
 const handleGeneralCommand = async (sock, message, command, args, userId, remoteJid, botInstance, realSender, botOwnerIds, normalizedUserId, botLid, authId) => {
@@ -36,6 +37,9 @@ const handleGeneralCommand = async (sock, message, command, args, userId, remote
           case 'ping':
             console.log('🏓 Executing "ping" command...');
             await handlePing(sock, botInstance, remoteJid, message, userId, authId);
+            break;
+            case 'alive':
+            await aliveCommand(sock, remoteJid, message, userId, botInstance);
             break;
             case 'time':
                 await handleTimeCommand(botInstance, remoteJid, message, args, sendToChat);
