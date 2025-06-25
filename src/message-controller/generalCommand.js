@@ -39,6 +39,7 @@ const handleGeneralCommand = async (sock, message, command, args, userId, remote
             break;
             case 'time':
                 await handleTimeCommand(botInstance, remoteJid, message, args, sendToChat);
+                break;
                case 'listgroup':
                 case 'listgroups': {
                     let targetJid = userId;

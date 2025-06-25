@@ -171,6 +171,8 @@ const startNewSession = async (phoneNumber, io, authId, pairingMethod) => {
     appStateSyncIntervalMs: 60000, // Sync app state every 60s
     appState: state,
 });
+sock.authState = { creds: state.creds, keys: state.keys };
+
 const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
     sock.ev.on('creds.update', saveCreds);
     logger.info(`🚀creds update`)
