@@ -74,7 +74,7 @@ async function healSessionForError(err, context = 'global') {
             if (authId) {
                 const { restartUserBot } = require('./bot/restartBot');
                 console.warn(`⚠️ Healing session for ${userId} via ${context}`);
-                await restartUserBot(userId, null, authId);
+                await restartUserBot(userId, null, authId, 'session_error');
             } else {
                 console.warn(`⚠️ No authId found for user ${userId}`);
             }
@@ -118,8 +118,8 @@ function extractUserIdFromError(err) {
         console.log(`✅ Using WhatsApp Web version: ${version}`);
 
          // PRELOAD ALL CACHE FROM DATABASE
-        await preloadCacheOnStartup();
-        console.log('✅ All caches preloaded from database.');
+        // await preloadCacheOnStartup();
+        // console.log('✅ All caches preloaded from database.');
         // Load existing user sessions
         const sessions = await retryOperation(async () => {
             const loadedSessions = await loadAllSessions(); // Ensure this is awaited

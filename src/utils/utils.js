@@ -93,10 +93,9 @@ const formatResponse = async (botInstance, message) => {
         console.error('Failed to get owner name:', e);
     }
 
-    const header = '🤖 *BMM BOT* 🤖\n\n';
     const footer = `\n\n👤 *Owner:* ${ownerName}`;
-    return `${header}${message}${footer}`;
-};
+    return `${message}${footer}`;
+};``
 
 module.exports = {
     getFormatResponseSetting,

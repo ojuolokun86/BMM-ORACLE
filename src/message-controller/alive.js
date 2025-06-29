@@ -33,7 +33,7 @@ async function aliveCommand(sock, remoteJid, message, userId, botInstance) {
 
         // Compose message
       const aliveMsg = `
-╭━━━〔 *🤖 ${settings.botName || 'BMM'} Bot is Online* 〕━━━╮
+╭━〔 *🤖 ${settings.botName || 'BMM'} Bot is Online* 〕━╮
 
 📦 *Version:* ${settings.botVersion}
 ⚙️ *Mode:* ${mode}
@@ -57,7 +57,7 @@ async function aliveCommand(sock, remoteJid, message, userId, botInstance) {
 
 💬 _Type_ *.menu* _for all commands_
 
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
+╰━━━━━━━━━━━━━━━━━━━━━━━╯
 `;
 
 

@@ -230,7 +230,7 @@ const handleGroupCommand = async (sock, userId, message, command, args, sender, 
                             });
 
                             // Mark this message as deleted by the bot so antidelete won't restore it
-                            const { deletedMessagesByBot } = require('../utils/globalStore');
+                            const { deletedMessagesByBot } = require('../utils/globalStore'); // Import the global store
                             if (!deletedMessagesByBot[userId]) {
                                 deletedMessagesByBot[userId] = new Set();
                             }
@@ -547,8 +547,8 @@ const handleGroupCommand = async (sock, userId, message, command, args, sender, 
 
                                         const groupName = await getGroupName(sock, remoteJid);
                                         const groupAdmin = await getGroupOwner(sock, remoteJid); // Should return JID of owner/admin
-                                        const { text, mentions } = getWarningListMsg(warnings, { groupName, groupAdmin, groupId: remoteJid });
-                                        await sendToChat(botInstance, remoteJid, { message: text, mentions });
+                                        const { message, mentions } = getWarningListMsg(warnings, { groupName, groupAdmin, groupId: remoteJid });
+                                        await sendToChat(botInstance, remoteJid, { message, mentions });
                                     } catch (error) {
                                         console.error('❌ Failed to fetch warnings:', error);
                                         await sendToChat(botInstance, remoteJid, { message: '❌ Failed to fetch warnings. Please try again later.' });

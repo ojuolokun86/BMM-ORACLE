@@ -34,9 +34,12 @@ ${bypassUsersList}
 
 function getWarningListMsg(warnings, { groupName = 'Unknown', groupAdmin = 'Unknown', groupId = 'Unknown' } = {}) {
     if (!warnings || warnings.length === 0) {
-        return { text: 'ℹ️ No warnings found for this group.', mentions: [] };
+       return {
+        message: 'ℹ️ There are no warnings for this group.',
+        mentions: []
+        };
     }
-    const mentions = [];
+    const mentions = [groupAdmin]; // <-- Add admin JID here!
     const lines = warnings.map((warning, index) => {
         const userJid = warning.user_id;
         mentions.push(userJid);
@@ -44,17 +47,23 @@ function getWarningListMsg(warnings, { groupName = 'Unknown', groupAdmin = 'Unkn
         return `${index + 1}. ${userTag} - ${warning.warning_count} warning${warning.warning_count !== 1 ? 's' : ''} (${warning.reason || 'No reason provided'})`;
     });
     return {
-        text:
-`*⚠️ Warning List for Group:*
-━━━━━━━━━━━━━━━━━━━━
-📛 *Group Name:* ${groupName}
+    message:
+`🤖 *BMM BOT WARNING REPORT*
+━━━━━━━━━━━━━━━━━━━━━━━
+📌 *Group Name:* ${groupName}
 👑 *Group Admin:* @${groupAdmin.split('@')[0]}
 🆔 *Group ID:* ${groupId}
+━━━━━━━━━━━━━━━━━━━━━━━
 
+🗒️ *Warning List:*
 ${lines.join('\n')}
-━━━━━━━━━━━━━━━━━━━━`,
-        mentions
-    };
+
+━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ *Note:* Repeated violations may trigger auto-removal.
+`,
+    mentions
+};
+
 }
 
 function formatMentionTag(jid) {

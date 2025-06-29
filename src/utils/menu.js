@@ -1,6 +1,5 @@
 const settings = require('./settings');
-const fs = require('fs');
-const path = require('path');
+const sendToChat = require('./sendToChat');
 
 const getMainMenu = (prefix = '.', ownerName = 'Unknow') => `
 ╔═══════════════════╗
@@ -169,30 +168,17 @@ const getMainMenu = (prefix = '.', ownerName = 'Unknow') => `
 
 async function menu(sock, chatId, message, prefix, ownerName) {
     const menuText = getMainMenu(prefix, ownerName);
-    const imagePath = path.join(__dirname, '../assets/BMM.jpg');
     try {
-        if (fs.existsSync(imagePath)) {
-            const imageBuffer = fs.readFileSync(imagePath);
-            await sock.sendMessage(chatId, {
-                image: imageBuffer,
-                caption: menuText,
-                contextInfo: {
-                    forwardingScore: 999,
-                    isForwarded: true,
-                    forwardedNewsletterMessageInfo: {
-                        newsletterJid: '120363403127154832@newsletter', // your channel/newsletter JID
-                        newsletterName: '🤖BMM-BOT🤖', // your channel/newsletter name
-                        serverMessageId: -1
-                    }
-                }
-            }, { quoted: message });
-        } else {
-            await sock.sendMessage(chatId, { text: menuText }, { quoted: message });
-        }
+        await sendToChat(sock, chatId, {
+            message: menuText,
+            quoted: message
+        });
     } catch (error) {
         console.error('Error sending menu:', error);
-        await sock.sendMessage(chatId, { text: menuText });
+        await sendToChat(sock, chatId, {
+            message: '❌ Failed to send menu. Please try again later.',
+            quoted: message
+        });
     }
 }
-
-module.exports = {menu};
+module.exports = { menu };

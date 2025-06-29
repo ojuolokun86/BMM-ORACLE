@@ -226,9 +226,15 @@ module.exports = async (sock, userId, version) => {
                in ${isGroup ? 'group' : 
                 'DM'}: ${messageContent}`);
 
+                 if (message.messageStubType === 0) {
+                    const deletedBy = message.key.participant || message.key.remoteJid;
+                    console.log('🗑️ Message was deleted by:', deletedBy);
+                    console.log('📄 Deleted messageStubParameters:', message.messageStubParameters);
+                }
+
                 if (isGroup) {
                     try {
-                        await handleAntiLink(sock, message, userId);
+                        await handleAntiLink(sock, message, userId, sock);
                     } catch (err) {
                         console.error('❌ Anti-link error:', err);
                     }

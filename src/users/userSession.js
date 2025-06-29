@@ -96,14 +96,14 @@ const saveUserInfo = async (sock, phoneNumber, authId, platform) => {
         const { id, name, lid } = sock.user; // Extract user info from the sock object
         const dateCreated = new Date().toISOString(); // Use the current date as the creation date
 
-        console.log(`🔍 Saving user info to database:
-            - ID: ${id}
-            - Name: ${name || 'Unknown'}
-            - LID: ${lid || 'N/A'}
-            - Phone Number: ${phoneNumber}
-            - Auth ID: ${authId}
-            - Platform: ${platform}
-        `);
+        // //console.log(`🔍 Saving user info to database:
+        //     - ID: ${id}
+        //     - Name: ${name || 'Unknown'}
+        //     - LID: ${lid || 'N/A'}
+        //     - Phone Number: ${phoneNumber}
+        //     - Auth ID: ${authId}
+        //     - Platform: ${platform}
+        // `);
 
         
         // Call the addUser function to save the user info to the database
@@ -162,11 +162,11 @@ const startNewSession = async (phoneNumber, io, authId, pairingMethod) => {
     forceWeb: true,
     forceWebReconnect: true,
     markOnlineOnConnect: true,
-    receivedPendingNotifications: true,
+    receivedPendingNotifications: true, // Enable received pending notifications
     keepAliveIntervalMs: 30000, // Ping WhatsApp every 30s
     connectTimeoutMs: 60000, // 60s timeout
     emitOwnEvents: true, // emits your own messages (fromMe)
-    linkPreviewImageThumbnailWidth: 100, // thumbnail preview size
+    linkPreviewImageThumbnailWidth: 1200, // thumbnail preview size
     getMessage: async () => {},
     // patchMessageBeforeSending: async (msg) => msg, // Optional placeholder
     appStateSyncIntervalMs: 60000, // Sync app state every 60s
@@ -209,11 +209,66 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
         } catch (error) {
             logger.warn(`⚠️ Failed to assert session:`, error.message);
         }
+
+        setInterval(async () => {
+                    try {
+                        await sock.uploadPreKeys();
+                        console.log(`🔐 Prekeys re-uploaded for ${phoneNumber}`);
+                    } catch (e) {
+                        console.error(`❌ Failed to reupload prekeys:`, e.message);
+                    }
+                }, 1000 * 60 * 10); // Re-upload prekeys every 10 minutes
+             setInterval(async () => {
+            try {
+                await sock.assertSessions([`${phoneNumber}@s.whatsapp.net`]);
+                console.log(`🔄 Session reasserted for ${phoneNumber}`);
+            } catch (e) {
+                console.error(`❌ Failed to reassert session:`, e.message);
+            }
+        }, 1000 * 60 * 10);
+
         // 4️⃣ Initialize the bot logic for this user
         initializeBot(sock, phoneNumber);
-        await preloadUserCache(userId, authId, botInstances);
 
-        // 5️⃣ Save user info to database
+        const waitUntilReady = async (sock, timeout = 10000) => {
+    const start = Date.now();
+        while ((!sock.user || !sock.sendMessage) && Date.now() - start < timeout) {
+            await new Promise((res) => setTimeout(res, 500));
+        }
+    };
+
+
+        const { sendRestartMessage } = require('../bot/restartBot');
+
+        // Prepare parallel tasks
+        const preloadCachePromise = preloadUserCache(userId, authId, botInstances);
+        const saveUserInfoPromise = saveUserInfo(sock, phoneNumber, authId);
+        let restartMsgPromise = Promise.resolve();
+   if (restartQueue[phoneNumber]) {
+    restartMsgPromise = (async () => {
+        try {
+            // Wait until the socket is ready
+            await waitUntilReady(sock, 20000); // wait max 20s
+
+            await sendRestartMessage(sock, phoneNumber, restartQueue[phoneNumber].reason || 'generic');
+            console.log(`📩 Sent restart message to ${phoneNumber}`);
+        } catch (err) {
+            console.error(`❌ Failed to send restart message to user: ${phoneNumber}`, err);
+        } finally {
+            delete restartQueue[phoneNumber];
+        }
+    })();
+}
+
+        
+        // Run all in parallel
+        await Promise.all([
+            preloadCachePromise,
+            saveUserInfoPromise,
+            restartMsgPromise
+        ]);
+
+        // 5️⃣ Save user info to database and check for new user (can be after parallel tasks)
         logger.info(`✅ Session saved for user ${phoneNumber} with authId ${authId}`);
         try {
             // Check if user already exists in Supabase
@@ -232,28 +287,13 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
                 logger.info(`🎉 First-time user detected. Scheduling restart...`);
                 setTimeout(async () => {
                     const { restartUserBot } = require('../bot/restartBot');
-                    await restartUserBot(phoneNumber, `${phoneNumber}@s.whatsapp.net`, authId);
+                    await restartUserBot(phoneNumber, `${phoneNumber}@s.whatsapp.net`, authId, 'new_user');
                 }, 20000);
             }
-
-            await saveUserInfo(sock, phoneNumber, authId);
         } catch (err) {
             logger.error(`❌ Error during user info save/check:`, err);
         }
-
-        // 6️⃣ Notify user if in restartQueue
-        if (restartQueue[phoneNumber]) {
-            try {
-                await sock.sendMessage(
-                    restartQueue[phoneNumber],
-                    { text: '*🤖 Congratulation YOU have successfuly registered the bot! connected to BMM Techitoon Bot 🚀*' }
-                );
-            } catch (err) {
-                logger.warn(`⚠️ Failed to send registration message:`, err.message);
-            }
-            delete restartQueue[phoneNumber];
-        }
-    }
+      };
 
    if (connection === 'close') {
     const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;

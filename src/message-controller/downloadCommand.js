@@ -9,9 +9,9 @@ async function downloadMedia(sock, botInstance, remoteJid, url, type = 'video') 
     const outFile = path.join(__dirname, `../../tmp/${Date.now()}.${type === 'audio' ? 'mp3' : 'mp4'}`);
    let command;
         if (type === 'audio') {
-            command = `yt-dlp -x --audio-format mp3 -o "${outFile}" "${url}"`;
+            command = `yt-dlp --cookies cookies.txt -x --audio-format mp3 -o "${outFile}" "${url}"`;
         } else {
-            command = `yt-dlp -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4" --merge-output-format mp4 -o "${outFile}" "${url}"`;
+            command = `yt-dlp --cookies cookies.txt -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4" --merge-output-format mp4 -o "${outFile}" "${url}"`;
         }
 
     console.log(`[yt-dlp] Running: ${command}`);

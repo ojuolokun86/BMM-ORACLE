@@ -99,7 +99,7 @@ setInterval(() => {
     const now = Date.now();
     for (const [chatId, messages] of antideleteStore.entries()) {
         for (const [msgId, { timestamp }] of Object.entries(messages)) {
-            if (now - timestamp > 5 * 60 * 1000) {
+            if (now - timestamp > 10 * 60 * 1000) {
                 delete messages[msgId];
             }
         }
@@ -108,7 +108,7 @@ setInterval(() => {
 }, 60 * 1000);
 
 // Schedule cleanup every 5 minutes
-setInterval(cleanupMediaStore, 5 * 60 * 1000); // Run cleanup every 5 minutes
+setInterval(cleanupMediaStore, 10 * 60 * 1000); // Run cleanup every 5 minutes
 
 // Export the objects
 module.exports = {

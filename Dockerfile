@@ -11,7 +11,10 @@ WORKDIR /app
 
 # Copy package.json and install dependencies
 COPY package*.json ./
+RUN npm install @whiskeysockets/baileys@latest
 RUN npm install
+
+
 
 # Copy rest of the code
 COPY . .

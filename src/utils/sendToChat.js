@@ -1,42 +1,42 @@
 const { formatResponse } = require('./utils');
-const { healAndRestartBot } = require('./sessionFixer'); // ✅ Add this at the top
-const { getUserCached } = require('../database/userDatabase');  // ✅ To retrieve authId
+const { healAndRestartBot } = require('./sessionFixer');
+const { getUserCached } = require('../database/userDatabase');
+const { getUrlInfo } = require('@whiskeysockets/baileys'); // Make sure you have latest Baileys version
+const fs = require('fs');
+const path = require('path');
 
-/**
- * Centralized function to send messages to a chat.
- * If mentions are present, sends as a normal message (so mentions work).
- * If no mentions, sends as a forwarded/newsletter message.
- * Supports text, media, mentions, and replying to a message.
- */
+
+const imagePath = path.join(__dirname, '../assets/BMM.jpg'); // Adjust path as needed
+let imageBuffer = null;
+if (fs.existsSync(imagePath)) {
+    imageBuffer = fs.readFileSync(imagePath);
+}
+
+
+
 const sendToChat = async (botInstance, chatId, options = {}) => {
     const { message, mentions = [], media, caption, mediaType, quotedMessage } = options;
 
-    // Prepare the quoted object (only key and message, as required by Baileys)
-    let quoted = undefined;
-    if (quotedMessage && quotedMessage.key) {
-        quoted = {
-            key: quotedMessage.key,
-            ...(quotedMessage.message ? { message: quotedMessage.message } : {})
-        };
-    }
+    const quoted = {
+  key: {
+    remoteJid: '0@s.whatsapp.net',
+    fromMe: false,
+    id: 'BAE5F7A9BE3DFA85', // can be any random 16-char hex string
+    participant: '0@s.whatsapp.net',
+  },
+  message: {
+    conversation: 'Your WhatsApp is linked to a device using WhatsApp Web. Tap to learn more.'
+  }
+};
+
 
     try {
-        if (!botInstance || typeof botInstance.sendMessage !== 'function') {
-            throw new TypeError('Invalid botInstance: sendMessage is not a function.');
-        }
+        if (!botInstance?.sendMessage) throw new TypeError('Invalid botInstance');
+        if (!chatId?.endsWith('@s.whatsapp.net') && !chatId?.endsWith('@g.us')) throw new Error(`Invalid chatId: "${chatId}"`);
+        if (!message && !media) throw new Error('Either "message" or "media" must be provided.');
 
-        if (!chatId || (!chatId.endsWith('@s.whatsapp.net') && !chatId.endsWith('@g.us'))) {
-            throw new Error(`Invalid chatId: "${chatId}". Must end with "@s.whatsapp.net" or "@g.us".`);
-        }
+        const hasMentions = mentions.length > 0;
 
-        if (!message && !media) {
-            throw new Error('Either "message" or "media" must be provided.');
-        }
-
-        // Check if mentions are present
-        const hasMentions = mentions && mentions.length > 0;
-
-        // Prepare the outgoing message payload
         let payload;
         if (media) {
             const resolvedType = mediaType || 'image';
@@ -50,59 +50,59 @@ const sendToChat = async (botInstance, chatId, options = {}) => {
                 mentions,
                 ...(resolvedType === 'audio' || resolvedType === 'voice' ? { ptt: resolvedType === 'voice' } : {}),
             };
-            if (!hasMentions) {
-                payload.contextInfo = {
-                    forwardingScore:999, 
-                    isForwarded: true,
-                    forwardedNewsletterMessageInfo: {
-                        newsletterJid: '120363403127154832@newsletter',
-                        newsletterName: '🤖BMM-BOT🤖',
-                        serverMessageId: -1
-                    }
-                };
-            }
-        } else if (message && typeof message === 'string') {
+        } else if (typeof message === 'string') {
             const formattedMessage = await formatResponse(botInstance, message);
+            
+
+            // This will send the preview without displaying the actual URL in the text
             payload = {
                 text: formattedMessage,
                 mentions,
             };
-            if (!hasMentions) {
-                payload.contextInfo = {
-                    isForwarded: true,
-                    forwardingScore: 999,
-                    forwardedNewsletterMessageInfo: {
-                        newsletterJid: '120363403127154832@newsletter',
-                        newsletterName: '🤖BMM-BOT🤖',
-                        serverMessageId: -1
-                    }
-                };
-            }
-        } else {
-            throw new Error('Either "message" or "media" must be provided.');
         }
 
-        await botInstance.sendMessage(chatId, payload, quoted ? { quoted } : {});
+        // Attach contextInfo (optional)
+        if (!hasMentions) {
+           payload.contextInfo = {
+            forwardingScore: 999,
+            isForwarded: true,
 
+            // 👇 Newsletter forwarding style
+            forwardedNewsletterMessageInfo: {
+                newsletterJid: '120363403127154832@newsletter', // your real channel JID
+                newsletterName: '🤖BMM-BOT🤖',
+                serverMessageId: -1
+            },
+
+            // 👇 Verified-style rich preview
+            externalAdReply: {
+                title: '🤖 BMM WhatsApp Bot',
+                body: 'Powering smart automation.',
+                mediaType: 1,
+                showAdAttribution: true,
+                renderLargerThumbnail: true,
+                thumbnailUrl: 'https://files.catbox.moe/ow2buv.jpg',
+                thumbnail: imageBuffer // optional but improves consistency
+            }
+            }
+
+        }
+
+        await botInstance.sendMessage(chatId, payload, { quoted });
+        console.log(`✅ Message sent to ${chatId}:`, message || 'Media sent');
     } catch (error) {
         console.error(`❌ Error sending message to ${chatId}:`, error);
         if (error?.message?.includes('No open session')) {
-        const userId = chatId.replace('@s.whatsapp.net', '');
-        console.warn(`⚠️ SessionError detected while sending message to ${chatId}. Healing session...`);
-
-        try {
-            const user = await getUserCached(userId);
-            const authId = user?.auth_id;
-
-            if (authId) {
-                await healAndRestartBot(userId, authId);
-            } else {
-                console.warn(`⚠️ No authId found for ${userId}. Cannot heal session.`);
+            const userId = chatId.replace('@s.whatsapp.net', '');
+            try {
+                const user = await getUserCached(userId);
+                const authId = user?.auth_id;
+                if (authId) await healAndRestartBot(userId, authId);
+            } catch (e) {
+                console.error(`❌ Failed to auto-heal session for ${chatId}:`, e.message);
             }
-        } catch (healErr) {
-            console.error(`❌ Failed to auto-heal session for ${userId}:`, healErr.message);
         }
     }
-}};
+};
 
-module.exports =  sendToChat;
+module.exports = sendToChat;

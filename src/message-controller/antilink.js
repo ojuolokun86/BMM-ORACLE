@@ -103,7 +103,7 @@ async function getAntiLinkSettingsCached(groupId, userId) {
  * @param {object} message - The incoming message object.
  * @param {string} userId - The bot's user_id (normalized, as saved in DB).
  */
-const handleAntiLink = async (sock, message, userId) => {
+const handleAntiLink = async (sock, message, userId, botInstance) => {
     const chatId = message.key.remoteJid;
     const sender = message.key.participant || message.key.remoteJid;
     const messageId = message.key.id;
@@ -161,28 +161,67 @@ const handleAntiLink = async (sock, message, userId) => {
 
     // Detect links
     if (linkRegex.test(msgText)) {
-        await sock.sendMessage(chatId, { delete: message.key });
-        try {
-            const reason = 'Posting a prohibited link';
-            const warningCount = await warnUser(chatId, sender, reason, userId);
-            const warningThreshold = await getWarningThreshold(chatId, userId);
-            if (warningCount >= warningThreshold) {
-                await sock.groupParticipantsUpdate(chatId, [sender], 'remove');
-                await resetWarnings(chatId, sender, userId);
-            } else {
-                const warningMessage = `⚠️ @${sender.split('@')[0]}, sharing links is not allowed in this group. You have ${warningCount}/${warningThreshold} warnings.`;
-                await sock.sendMessage(chatId, { text: warningMessage, mentions: [sender] });
-            }
-        } catch (error) {
-            console.error(`❌ Failed to warn user ${sender} in group ${chatId}:`, error);
+    await sock.sendMessage(chatId, { delete: message.key });
+     const botId = sock.user?.id ? sock.user.id.split(':')[0].split('@')[0] : null;
+        if (botId) {
+            if (!deletedMessagesByBot[botId]) deletedMessagesByBot[botId] = new Set();
+            deletedMessagesByBot[botId].add(messageId);
+            console.log('[DEBUG] Added to deletedMessagesByBot:', messageId, 'for botId:', botId, 'in chat:', chatId);
         }
-    }
+    
 
-    // Track the deleted message
-    if (!deletedMessagesByBot[userId]) {
-        deletedMessagesByBot[userId] = new Set();
+    try {
+        const reason = 'Posting a prohibited link';
+        const warningCount = await warnUser(chatId, sender, reason, userId);
+        const warningThreshold = await getWarningThreshold(chatId, userId);
+
+        const roboticWarnings = [
+            `🤖 SYSTEM ALERT: Link detected.\n@${sender.split('@')[0]}, link sharing is *unauthorized* in this group.\n⚠️ Warning ${warningCount}/${warningThreshold}. Violation logged.`,
+            `🛡️ BMM BOT Firewall Activated.\n@${sender.split('@')[0]}, links are blocked for group security.\n⚠️ Strike ${warningCount}/${warningThreshold}. Next strike = auto removal.`,
+            `🤖 BMM BOT DETECTED A LINK!\n@${sender.split('@')[0]}, this action is *not permitted*.\n⚠️ You now have ${warningCount}/${warningThreshold} warnings.`,
+            `📡 POLICY ENFORCEMENT TRIGGERED\n@${sender.split('@')[0]}, link sharing violates group rules.\n🤖 Warning ${warningCount}/${warningThreshold}. Final action will be executed if limit is reached.`,
+            `🚨 UNAUTHORIZED TRANSMISSION DETECTED\n@${sender.split('@')[0]}, links are not allowed here.\n⚠️ You have been flagged: ${warningCount}/${warningThreshold}.`,
+            `🤖 AUTOMOD ALERT:\n@${sender.split('@')[0]}, link sharing is a *restricted operation*.\nWarning Count: ${warningCount}/${warningThreshold}.`,
+            `⚠️ RULE VIOLATION NOTICE:\n@${sender.split('@')[0]}, external links are *forbidden* in this group.\n🤖 BMM BOT Warning: ${warningCount}/${warningThreshold}.`,
+            `🛰️ PROTOCOL BREACH DETECTED\n@${sender.split('@')[0]}, link distribution is not authorized.\n⚠️ Warning Level: ${warningCount}/${warningThreshold}.`,
+            `🤖 BMM BOT SECURITY SYSTEM ENGAGED\n@${sender.split('@')[0]}, link sharing is a violation.\n⚠️ Warning ${warningCount}/${warningThreshold}. Automatic enforcement pending.`,
+            `🔐 ANTI-LINK ENFORCEMENT UNIT\n@${sender.split('@')[0]}, link detected and blocked.\n⚠️ Warning Level: ${warningCount}/${warningThreshold}. Bot will escalate if limit is reached.`,
+            `🤖 SECURITY NOTICE: @${sender.split('@')[0]}, link transmission detected and blocked.\n⚠️ You are now at ${warningCount}/${warningThreshold} warnings. Auto-discipline system is active.`,
+
+            `🤖 WARNING SYSTEM ONLINE:\n@${sender.split('@')[0]}, external link sharing is in breach of BMM BOT policy.\n⚠️ Violation ${warningCount}/${warningThreshold}. Logging incident.`,
+
+            `🚫 CYBER PROTOCOL VIOLATION:\n@${sender.split('@')[0]}, links are restricted under group policy.\n⚠️ Warning Status: ${warningCount}/${warningThreshold}. Bot alert triggered.`,
+
+            `🤖 ALERT: NETWORK BREACH ATTEMPT\n@${sender.split('@')[0]}, unauthorized link sharing blocked.\n⚠️ Current Violation Level: ${warningCount}/${warningThreshold}.`,
+
+            `🤖 LINK FILTER ACTIVE:\n@${sender.split('@')[0]}, this message violated group security settings.\n⚠️ Warning Count: ${warningCount}/${warningThreshold}. System integrity maintained.`,
+
+            `📡 MONITORING UNIT DETECTION:\n@${sender.split('@')[0]}, link transmission is not allowed in this frequency.\n⚠️ Infraction ${warningCount}/${warningThreshold}. Enforcement pending.`,
+
+            `🤖 ACCESS DENIED:\n@${sender.split('@')[0]}, link detected — operation unauthorized.\n⚠️ Warning: ${warningCount}/${warningThreshold}. Repeating this may lead to elimination.`,
+
+            `🔒 INTRUSION DETECTED\n@${sender.split('@')[0]}, group link policy breach confirmed.\n⚠️ Warning Level: ${warningCount}/${warningThreshold}. Disciplinary protocol armed.`,
+
+            `🤖 SYSTEM OVERRIDE INITIATED\n@${sender.split('@')[0]}, prohibited link sharing is not permitted.\n⚠️ ${warningCount}/${warningThreshold} warnings issued. Monitor continues.`,
+
+            `🤖 BMM BOT FIREWALL BLOCK\n@${sender.split('@')[0]}, your link has been removed.\n⚠️ Strike Count: ${warningCount}/${warningThreshold}. Threat status updated.`,
+
+        ];
+
+        // Pick random robotic warning
+        const warningMessage = roboticWarnings[Math.floor(Math.random() * roboticWarnings.length)];
+
+        if (warningCount >= warningThreshold) {
+            await sock.groupParticipantsUpdate(chatId, [sender], 'remove');
+            await resetWarnings(chatId, sender, userId);
+        } else {
+            await sendToChat(sock, chatId, { message: warningMessage, mentions: [sender] });
+        }
+
+    } catch (error) {
+        console.error(`❌ Failed to warn user ${sender} in group ${chatId}:`, error);
     }
-    deletedMessagesByBot[userId].add(messageId);
+}
 };
 
 module.exports = {

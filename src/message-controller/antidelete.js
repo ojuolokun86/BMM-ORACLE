@@ -8,6 +8,7 @@ const { saveAntideleteMessage, getAntideleteMessage, deleteAntideleteMessage } =
 const { getBotInstance } = require('../utils/getBotInstance'); // Import the bot instance ID
 const { formatResponse } = require('../utils/utils');
 const { antideleteCache } = require('../utils/settingsCache');
+const  sendToChat  = require('../utils/sendToChat'); // Import sendToChat function
 
 
 async function getAntideleteSettingsCached(groupId, botInstanceId) {
@@ -120,49 +121,50 @@ const handleAntidelete = async (sock, message, botInstanceId) => {
     // Check if the deleted message exists in the media store
     const mediaData = mediaStore.get(deletedMessageId);
     if (mediaData) {
-        console.log(`✅ Media file found in memory for message ID: ${deletedMessageId}`);
+    console.log(`✅ Media file found in memory for message ID: ${deletedMessageId}`);
 
-        // Map the `messageType` to valid types for `sendMessage`
-        const validMediaTypes = {
-            imageMessage: 'image',
-            videoMessage: 'video',
-            documentMessage: 'document',
-            audioMessage: 'audio', // Add support for audio files
-            voiceMessage: 'audio', // Add support for voice notes
-        };
+    // Map the `messageType` to valid types for `sendMessage`
+    const validMediaTypes = {
+        imageMessage: 'image',
+        videoMessage: 'video',
+        documentMessage: 'document',
+        audioMessage: 'audio', // Add support for audio files
+        voiceMessage: 'audio', // Add support for voice notes
+    };
 
-       
-        const resolvedMediaType = validMediaTypes[mediaData.messageType];
-        if (!resolvedMediaType) {
-            console.error(`❌ Unsupported media type: ${mediaData.messageType}`);
-            return;
-        }
+    const resolvedMediaType = validMediaTypes[mediaData.messageType];
+    if (!resolvedMediaType) {
+        console.error(`❌ Unsupported media type: ${mediaData.messageType}`);
+        return;
+    }
 
-        // Format the deletion time
-        const deletionTime = new Date().toLocaleString(); // Current time when the message was deleted
-        const deletedByUser = deletedBy.split('@')[0]; // Extract the user ID
-        
-        // Restore the media file
-        try {
-            await sock.sendMessage(remoteJid, {
-                text: `♻️ Restored deleted file:\n\n*File Content:* ${mediaData.caption || 'No caption'}\n\n*Deleted By:* @${deletedByUser}\n*Deleted At:* ${deletionTime}`,
-                mentions: [deletedBy],
-            });
+    // Format the deletion time
+    const deletionTime = new Date().toLocaleString(); // Current time when the message was deleted
+    const deletedByUser = deletedBy.split('@')[0]; // Extract the user ID
 
-            await sock.sendMessage(remoteJid, {
-                [resolvedMediaType]: mediaData.buffer,
-                caption: mediaData.caption || '',
-            });
+    // Restore the media file
+    try {
+        // Use sendToChat for the text message
+        await sendToChat(sock, remoteJid, {
+            message: `♻️ Restored deleted file:\n\n*File Content:* ${mediaData.caption || 'No caption'}\n\n*Deleted By:* @${deletedByUser}\n*Deleted At:* ${deletionTime}`,
+            mentions: [deletedBy],
+        });
 
-            console.log(`✅ Restored media file for message ID: ${deletedMessageId}`);
-        } catch (error) {
-            console.error(`❌ Failed to restore media file for message ID: ${deletedMessageId}`, error);
-        }
+        // Send the media file as before
+        await sock.sendMessage(remoteJid, {
+            [resolvedMediaType]: mediaData.buffer,
+            caption: mediaData.caption || '',
+        });
 
-        // Remove the restored media from the store to free memory
-        mediaStore.delete(deletedMessageId);
-        console.log(`✅ Media file removed from memory for message ID: ${deletedMessageId}`);
-   return;
+        console.log(`✅ Restored media file for message ID: ${deletedMessageId}`);
+    } catch (error) {
+        console.error(`❌ Failed to restore media file for message ID: ${deletedMessageId}`, error);
+    }
+
+    // Remove the restored media from the store to free memory
+    mediaStore.delete(deletedMessageId);
+    console.log(`✅ Media file removed from memory for message ID: ${deletedMessageId}`);
+    return;
 }
 const msg = getAntideleteMessage(remoteJid, deletedMessageId);
 if (msg) {
@@ -170,10 +172,10 @@ if (msg) {
     const deletedByUser = deletedBy.split('@')[0];
     // Format the restored message with BMM BOT tag and owner name
     const restoreText = `♻️ Restored deleted message:\n\n*Message Content:* ${msg.content}\n\n*Deleted By:* @${deletedByUser}\n*Deleted At:* ${deletionTime}`;
-    const formattedRestoreText = await formatResponse(sock, restoreText);
 
-    await sock.sendMessage(remoteJid, {
-        text: formattedRestoreText,
+    // Use sendToChat for the restored message
+    await sendToChat(sock, remoteJid, {
+        message: restoreText,
         mentions: [deletedBy],
     });
     deleteAntideleteMessage(remoteJid, deletedMessageId);

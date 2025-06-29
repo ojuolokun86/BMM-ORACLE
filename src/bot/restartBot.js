@@ -1,13 +1,44 @@
 const { botInstances, restartQueue, intentionalRestarts } = require('../utils/globalStore');
 const { updateUserMetrics } = require('../database/models/metrics');
 
+const sendToChat = require('../utils/sendToChat');
+
+const sendRestartMessage = async (sock, phoneNumber, reason = 'generic') => {
+    let msg;
+    switch (reason) {
+        case 'new_user':
+            msg = `🎉 *Welcome!*\n\nYour bot is now registered and ready to use.`;
+            break;
+        case 'owner_restart':
+            msg = `🔄 *Bot Restarted by Owner*\n\nYour bot session has been restarted by the owner.`;
+            break;
+        case 'session_error':
+            msg = `⚠️ *Session Error*\n\nYour bot session was restarted due to a session error.`;
+            break;
+        default:
+            msg = `🔄 *Bot Restarted*\n\nYour bot session has been restarted.`;
+    }
+    let targetJid = phoneNumber;
+    if (!targetJid.endsWith('@s.whatsapp.net')) {
+        targetJid = `${targetJid.replace(/\D/g, '')}@s.whatsapp.net`;
+    }
+    try {
+        await sendToChat(sock, targetJid, { message: msg });
+        console.log(`📩 Sent restart message to user: ${phoneNumber}`);
+    } catch (err) {
+        console.error(`❌ Failed to send restart message to user: ${phoneNumber}`, err);
+    }
+};
+
 /**
  * Restart the user's bot instance.
  * @param {string} userId - The user's phone number.
  * @param {string} remoteJid - The chat ID where the restart command was used.
  * @param {string} authId - The user's authentication ID.
+ * @param {string} reason - Reason for restart (new_user, owner_restart, session_error, etc.)
  */
-const restartUserBot = async (userId, remoteJid, authId,) => {
+const restartUserBot = async (userId, remoteJid, authId, reason = 'generic') => {
+    const phoneNumber = userId;
     const startTime = Date.now();
 
     try {
@@ -16,8 +47,7 @@ const restartUserBot = async (userId, remoteJid, authId,) => {
         const botInstance = botInstances[userId];
 
         // Add the remoteJid to the restart queue
-        restartQueue[userId] = remoteJid;
-        const phoneNumber = userId;
+        restartQueue[userId] = { remoteJid, reason };
         console.log(`📋 Added ${phoneNumber} to restart queue with remoteJid: ${remoteJid}`);
         // Mark this user for intentional restart to prevent reconnection during shutdown
         intentionalRestarts.add(phoneNumber);
@@ -65,4 +95,4 @@ const restartUserBot = async (userId, remoteJid, authId,) => {
     }
 };
 
-module.exports = { restartUserBot, restartQueue };
+module.exports = { restartUserBot, restartQueue, sendRestartMessage };
