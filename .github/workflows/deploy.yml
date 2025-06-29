@@ -19,8 +19,9 @@ jobs:
         username: ${{ secrets.VPS_USER }}
         key: ${{ secrets.VPS_PRIVATE_KEY }}
         script: |
-          cd /home/ubuntu/your-repo-folder
+          cd BMM-ORACLE
           git pull origin main
+          RUN npm install @whiskeysockets/baileys@latest
           npm install
           pm2 restart bmm-bot || pm2 start src/index.js --name bmm-bot
 
