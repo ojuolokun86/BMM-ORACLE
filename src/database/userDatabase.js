@@ -1,7 +1,6 @@
 const supabase = require('../supabaseClient');
 const path = require('path');
 const fs = require('fs');
-const { deleteSessionFromMemory } = require('./models/memory');
 const { deleteSessionFromSupabase, listSessionsFromSupabase } = require('./models/supabaseAuthState'); // MongoDB session handlers
 const sessionsDir = path.join(__dirname, '../../sessions');
 const { botInstances } = require('../utils/globalStore'); // Import the bot instances
@@ -9,7 +8,7 @@ const { deleteUserMetrics } = require('./models/metrics'); // Import the in-memo
 const { sessionTimers } = require('../utils/globalStore'); // Import your timers map
 const globalStore = require('../utils/globalStore');
 const { subscriptionLevelCache, userCache, groupModeCache, groupOnlyModeCache, statusSettingsCache} = require('../utils/settingsCache');
-
+const { deleteSessionFromSQLite,} = require('./models/sqliteAuthState'); // SQLite session handlers
 
 /**
  * Add or update a user in the `users` table in Supabase.
@@ -502,10 +501,6 @@ const deleteUserData = async (phoneNumber) => {
                 console.log(`⚠️ No active bot instance found for user: ${key}`);
             }
 
-            // 2. Delete the user's session from memory for all keys
-            deleteSessionFromMemory(key);
-            console.log(`✅ Deleted session from memory for user: ${key}`);
-
             // 3. Delete metrics for the user for all keys
             deleteUserMetrics(key);
             console.log(`✅ Deleted metrics for user: ${key}`);
@@ -522,7 +517,10 @@ const deleteUserData = async (phoneNumber) => {
 
         // 5. Delete the user's session from Supabase (only needs to be done once)
         await deleteSessionFromSupabase(phoneNumber);
+       
         console.log(`✅ Deleted session from Supabase for user: ${phoneNumber}`);
+         await deleteSessionFromSQLite(phoneNumber); // Also delete from SQLite if applicable
+         console.log(`✅ Deleted session from SQLite for user: ${phoneNumber}`);
 
         // 6. Delete the user's data from the `users` table in Supabase
         const { error: userError } = await supabase

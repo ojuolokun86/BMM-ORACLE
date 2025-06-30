@@ -4,7 +4,7 @@ const { saveSessionToSupabase } = require('../database/models/supabaseAuthState'
 const { deleteUserData } = require('../database/userDatabase');
 const { fullyStopSession } = require('./userSession');
 const pino = require('pino');
-const { useHybridAuthState } = require('../database/hybridAuthState');
+const { useSupabaseAuthState} = require('../database/hybridAuthState');
 const logger = pino({
   level: 'info', // or 'debug', 'error', etc.
   timestamp: pino.stdTimeFunctions.isoTime,
@@ -56,8 +56,9 @@ async function registerUser(phoneNumber, io, authId, pairingMethod) {
     let pairingCodeSent = false;
     let registrationDone = false;
     let registrationStopped = false;
-    // Use hybrid auth state for robust registration
-    const { state, saveCreds } = await useHybridAuthState(phoneNumber, authId);
+    // Use Supabase auth state for robust registration
+    const { useSQLiteAuthState } = require('../database/models/sqliteAuthState');
+    const { state, saveCreds } = await useSQLiteAuthState(phoneNumber, authId);
     const { version } = await fetchLatestBaileysVersion(); // ✅ STEP 2
 
     async function startRegistrationSocket() {

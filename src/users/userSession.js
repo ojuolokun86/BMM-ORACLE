@@ -7,12 +7,15 @@ const path = require('path');
 const fs = require('fs');
 const pino = require('pino');
 const { Boom } = require('@hapi/boom');
-const { useHybridAuthState } = require('../database/hybridAuthState');
+const { useSupabaseAuthState } = require('../database/hybridAuthState');
 const { fetchWhatsAppWebVersion } = require('../utils/AppWebVersion'); // Import the function to fetch WhatsApp Web version
-const { listSessionsFromSupabase } = require('../database/models/supabaseAuthState'); // Import the function to list sessions from Supabase
+const { listSessionsFromSupabase, saveSessionToSupabase, loadAllSessionsFromSupabase } = require('../database/models/supabaseAuthState'); // Import the function to list sessions from Supabase
 const QRCode = require('qrcode'); // Add this at the top of your file
 const logger = pino();
 const { preloadUserCache } = require('../database/userDatabase');
+const { getSocketInstance } = require('../server/socket');
+const { useSQLiteAuthState, saveSessionToSQLite } = require('../database/models/sqliteAuthState'); // Import the SQLite auth state function
+
 
 
 const sessionTimers = {};
@@ -96,14 +99,14 @@ const saveUserInfo = async (sock, phoneNumber, authId, platform) => {
         const { id, name, lid } = sock.user; // Extract user info from the sock object
         const dateCreated = new Date().toISOString(); // Use the current date as the creation date
 
-        // //console.log(`🔍 Saving user info to database:
-        //     - ID: ${id}
-        //     - Name: ${name || 'Unknown'}
-        //     - LID: ${lid || 'N/A'}
-        //     - Phone Number: ${phoneNumber}
-        //     - Auth ID: ${authId}
-        //     - Platform: ${platform}
-        // `);
+        console.log(`🔍 Saving user info to database:
+            - ID: ${id}
+            - Name: ${name || 'Unknown'}
+            - LID: ${lid || 'N/A'}
+            - Phone Number: ${phoneNumber}
+            - Auth ID: ${authId}
+            - Platform: ${platform}
+        `);
 
         
         // Call the addUser function to save the user info to the database
@@ -145,7 +148,7 @@ const startNewSession = async (phoneNumber, io, authId, pairingMethod) => {
         delete botInstances[phoneNumber];
     }
     logger.info(`🔄 Starting session for ${phoneNumber} with authId ${authId}`);
-    const { state, saveCreds } = await useHybridAuthState(phoneNumber, authId);
+    const { state, saveCreds } = await useSQLiteAuthState(phoneNumber, authId);
     const { version } = await fetchLatestBaileysVersion(); // ✅ STEP 2
 
    const sock = makeWASocket({
@@ -170,7 +173,6 @@ const startNewSession = async (phoneNumber, io, authId, pairingMethod) => {
     getMessage: async () => {},
     // patchMessageBeforeSending: async (msg) => msg, // Optional placeholder
     appStateSyncIntervalMs: 60000, // Sync app state every 60s
-    appState: state,
 });
 sock.authState = { creds: state.creds, keys: state.keys };
 
@@ -228,7 +230,9 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
         }, 1000 * 60 * 10);
 
         // 4️⃣ Initialize the bot logic for this user
-        initializeBot(sock, phoneNumber);
+                 initializeBot(sock, phoneNumber);
+                 console.log(`✅ Bot initialized for ${phoneNumber}`);
+
 
         const waitUntilReady = async (sock, timeout = 10000) => {
     const start = Date.now();
@@ -246,9 +250,24 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
         let restartMsgPromise = Promise.resolve();
    if (restartQueue[phoneNumber]) {
     restartMsgPromise = (async () => {
-        try {
-            // Wait until the socket is ready
-            await waitUntilReady(sock, 20000); // wait max 20s
+                        try {
+                            // Wait until the socket is ready
+                            await waitUntilReady(sock, 20000); // wait max 20s
+                            await new Promise((resolve, reject) => {
+                    const maxWait = 10000;
+                    const start = Date.now();
+
+                    const checkSession = async () => {
+                        try {
+                            await sock.assertSessions([`${phoneNumber}@s.whatsapp.net`]);
+                            return resolve();
+                        } catch (err) {
+                            if (Date.now() - start > maxWait) return reject(new Error('❌ Session not ready after wait.'));
+                            return setTimeout(checkSession, 500);
+                        }
+                    };
+                    checkSession();
+                });
 
             await sendRestartMessage(sock, phoneNumber, restartQueue[phoneNumber].reason || 'generic');
             console.log(`📩 Sent restart message to ${phoneNumber}`);
@@ -261,12 +280,7 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
 }
 
         
-        // Run all in parallel
-        await Promise.all([
-            preloadCachePromise,
-            saveUserInfoPromise,
-            restartMsgPromise
-        ]);
+      
 
         // 5️⃣ Save user info to database and check for new user (can be after parallel tasks)
         logger.info(`✅ Session saved for user ${phoneNumber} with authId ${authId}`);
@@ -284,7 +298,7 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
 
             // If first-time user, schedule a restart for full initialization
             if (!existingUser) {
-                logger.info(`🎉 First-time user detected. Scheduling restart...`);
+                console.info(`🎉 First-time user detected. Scheduling restart...`);
                 setTimeout(async () => {
                     const { restartUserBot } = require('../bot/restartBot');
                     await restartUserBot(phoneNumber, `${phoneNumber}@s.whatsapp.net`, authId, 'new_user');
@@ -293,6 +307,12 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
         } catch (err) {
             logger.error(`❌ Error during user info save/check:`, err);
         }
+          // Run all in parallel
+        await Promise.all([
+            preloadCachePromise,
+            saveUserInfoPromise,
+            restartMsgPromise
+        ]);
       };
 
    if (connection === 'close') {
@@ -384,8 +404,8 @@ sock.ev.on('iq', async iq => {
                         console.warn(`⚠️ Not saving session for deleted user: ${phoneNumber}`);
                         return;
                     }
-                    const memory = require('../database/models/memory');
-                    memory.saveSessionToMemory(phoneNumber, {
+
+                    await saveSessionToSQLite(phoneNumber, {
                         creds: sock.authState.creds,
                         keys: sock.authState.keys,
                         authId
@@ -405,26 +425,27 @@ sock.ev.on('iq', async iq => {
  * Load all existing sessions using hybridAuthState.
  * @returns {Array} - An array of session objects with phone numbers.
  */
+const { listSessionsFromSQLite } = require('../database/models/sqliteAuthState');
+
 const loadAllSessions = async () => {
     try {
-        console.log('🔄 Loading all sessions from Supabase...');
-        const sessions = await listSessionsFromSupabase(); // Fetch all phone numbers from Supabase
-        console.log(`✅ Loaded ${sessions.length} sessions from Supabase.`, sessions); // Debug log
+        console.log('🔄 Loading all sessions from SQLite...');
+        const sessions = listSessionsFromSQLite(); // <-- Use SQLite, not Supabase
+        console.log(`✅ Loaded ${sessions.length} sessions from SQLite.`, sessions);
 
         const initializedSessions = [];
+        const io = getSocketInstance();
+
         for (const session of sessions) {
-            const phoneNumber = session.phoneNumber; // Extract phoneNumber
-            const authId = session.authId; // Extract authId
-            console.log(`🔄 Attempting to initialize session for phone number: ${phoneNumber} , authId: ${authId}`); // Debug log
+            const phoneNumber = session.phoneNumber;
+            const authId = session.authId;
+            console.log(`🔄 Attempting to start session for phone number: ${phoneNumber} , authId: ${authId}`);
 
             try {
-                const { state } = await useHybridAuthState(phoneNumber, authId); // Load session using hybridAuthState
-                if (state) {
-                    console.log(`✅ Session initialized for ${phoneNumber} and authId: ${authId}`);
-                    initializedSessions.push({ phoneNumber, authId });
-                }
+                await startNewSession(phoneNumber, io, authId);
+                initializedSessions.push({ phoneNumber, authId });
             } catch (error) {
-                console.error(`❌ Failed to initialize session for ${phoneNumber}:`, error.message);
+                console.error(`❌ Failed to start session for ${phoneNumber}:`, error.message);
             }
         }
 

@@ -3,12 +3,7 @@ const bcrypt = require('bcryptjs'); // For password hashing
 const supabase = require('../supabaseClient'); // Supabase client
 const router = express.Router();
 require('dotenv').config(); // Load environment variables
-const { botInstances } = require('../utils/globalStore')
-const { listSessionsFromMemory, getUserSessionsMemoryUsage } = require('../database/models/memory'); // Import memory functions
-const { deleteUserData } = require('../database/userDatabase'); // Import deleteUserData function
-const { restartUserBot } = require('../bot/restartBot'); // Import the restartBot function
-const { getAllUserMetrics } = require('../database/models/metrics'); // Import metrics functions
-
+const { loadSessionFromSupabase, deleteSessionFromSupabase } = require('../database/models/supabaseAuthState');
 
 // Helper function to generate a random four-digit auth_id
 const generateAuthId = () => {
@@ -130,7 +125,6 @@ router.post('/login', async (req, res) => {
     }
 });
 
-
 // Restart a bot for the logged-in user
 router.post('/restart-bot/:phoneNumber', async (req, res) => {
     console.log('📥 Received request to restart bot:', JSON.stringify(req.params), JSON.stringify(req.body));
@@ -140,19 +134,16 @@ router.post('/restart-bot/:phoneNumber', async (req, res) => {
     console.log(`📥 Restarting bot for phoneNumber: ${phoneNumber}, authId: ${authId}`); // Debug log
 
     try {
-       const bots = listSessionsFromMemory().filter(
-        (bot) => String(bot.authId) === String(authId) && String(bot.phoneNumber) === String(phoneNumber)
-        );
-        console.log(`🔍 Found ${bots.length} bot(s) for phoneNumber: ${phoneNumber} with authId: ${authId}`); // Debug log
-
-        if (!bots || bots.length === 0) {
-            console.log(`⚠️ No bot found for phoneNumber: ${phoneNumber} with authId: ${authId}`); // Debug log
-            return res.status(404).json({ success: false, message: 'Bot not found for this user.' });
+        // Load session from Supabase
+        const session = await loadSessionFromSupabase(phoneNumber);
+        if (!session || String(session.creds?.authId) !== String(authId)) {
+            console.log(`⚠️ No session found in Supabase for phoneNumber: ${phoneNumber} with authId: ${authId}`); // Debug log
+            return res.status(404).json({ success: false, message: 'Bot/session not found for this user.' });
         }
-    
+
         const userId = phoneNumber;
-        console.log(`🔍 Found ${bots.length} bot(s) for phoneNumber: ${phoneNumber}`); // Debug log
-         await restartUserBot(userId, null, authId); // Call the restartBot function
+        const { restartUserBot } = require('../bot/restartBot');
+        await restartUserBot(userId, null, authId); // Call the restartBot function
         console.log(`✅ Bot restarted for phoneNumber: ${phoneNumber}`);
         res.status(200).json({ success: true, message: `Bot restarted successfully for ${phoneNumber}.` });
     } catch (error) {
@@ -160,6 +151,7 @@ router.post('/restart-bot/:phoneNumber', async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to restart bot.', error: error.message });
     }
 });
+
 // Delete a bot for the logged-in user
 router.delete('/delete-bot/:phoneNumber', async (req, res) => {
     const { phoneNumber } = req.params;
@@ -169,15 +161,23 @@ router.delete('/delete-bot/:phoneNumber', async (req, res) => {
     console.log(`📥 Deleting bot for phoneNumber: ${phoneNumber}, authId: ${authId}`); // Debug log
 
     try {
-       const bots = listSessionsFromMemory().filter(
-        (bot) => String(bot.authId) === String(authId) && String(bot.phoneNumber) === String(phoneNumber)
-        );
-
-        if (!bots || bots.length === 0) {
-            return res.status(404).json({ success: false, message: 'Bot not found for this user.' });
+        // Load session from Supabase to verify existence and ownership
+        const session = await loadSessionFromSupabase(phoneNumber);
+        if (!session || String(session.creds?.authId) !== String(authId)) {
+            return res.status(404).json({ success: false, message: 'Bot/session not found for this user.' });
         }
+
+        // Remove from botInstances if present
+        const { botInstances } = require('../utils/globalStore');
         delete botInstances[userId];
-        await deleteUserData(phoneNumber); // Delete the bot
+
+        // Delete session from Supabase
+        await deleteSessionFromSupabase(phoneNumber);
+
+        // Optionally, delete user data from other tables if needed
+        const { deleteUserData } = require('../database/userDatabase');
+        await deleteUserData(phoneNumber);
+
         console.log(`✅ Bot deleted for phoneNumber: ${phoneNumber}`);
         res.status(200).json({ success: true, message: `Bot deleted successfully for ${phoneNumber}.` });
     } catch (error) {

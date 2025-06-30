@@ -1,21 +1,39 @@
 const { getSocketInstance } = require('./socket');
-const { listSessionsFromMemory, getUserTotalROM, getSessionMemoryUsage, getUptime, getLastActive, getVersion } = require('../database/models/memory');
+const { getUserTotalROM, getUptime, getLastActive, getVersion } = require('../database/models/memory');
 const { getActivityLog, getAnalyticsData } = require('./info');
+const supabase = require('../supabaseClient');
+const { botInstances } = require('../utils/globalStore');
 
-function emitUserBotInfo(authId) {
+async function emitUserBotInfo(authId) {
     const io = getSocketInstance();
     if (!io) return;
-    const bots = listSessionsFromMemory().filter(bot => bot.authId === authId);
-    const botsWithDetails = bots.map(bot => ({
-        phoneNumber: bot.phoneNumber,
-        authId: bot.authId,
-        status: bot.active ? 'Active' : 'Inactive',
-        ram: getSessionMemoryUsage(bot.phoneNumber),
-        rom: `${getUserTotalROM(authId)} MB`,
-        uptime: getUptime(bot.phoneNumber),
-        lastActive: getLastActive(bot.phoneNumber),
-        version: bot.version || getVersion(),
-    }));
+
+    // Fetch bots for this user from Supabase
+    const { data: bots, error } = await supabase
+        .from('users')
+        .select('user_id, auth_id')
+        .eq('auth_id', authId);
+
+    if (error) {
+        console.error('❌ Failed to fetch bots from Supabase:', error.message);
+        return;
+    }
+
+    const botsWithDetails = (bots || []).map(bot => {
+        // Check if bot is active in memory
+        const instance = botInstances[bot.user_id];
+        const isActive = instance && instance.sock && instance.sock.ws && instance.sock.ws.readyState === 1;
+        return {
+            phoneNumber: bot.user_id,
+            authId: bot.auth_id,
+            status: isActive ? 'Active' : 'Inactive',
+            rom: `${getUserTotalROM(bot.auth_id)} MB`,
+            uptime: getUptime(bot.user_id),
+            lastActive: getLastActive(bot.user_id),
+            version: getVersion(), // Or use a global version if needed
+        };
+    });
+
     io.to(String(authId)).emit('bot-info', { bots: botsWithDetails });
     io.to(String(authId)).emit('activity-log', getActivityLog(authId));
     io.to(String(authId)).emit('analytics', getAnalyticsData(authId));

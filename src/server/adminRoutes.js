@@ -4,14 +4,13 @@ require('dotenv').config();
 const crypto = require('crypto');
 const { listSessionsFromSupabase, deleteSessionFromSupabase } = require('../database/models/supabaseAuthState'); // Import the session management functions    
 const { restartUserBot } = require('../bot/restartBot'); // Import the restartBot function
-const {getUserTotalROM, getAllSessionsMemoryUsage, listSessionsFromMemory,  getSessionMemoryUsage } = require('../database/models/memory'); // Import the memory usage function
+const {getUserTotalROM } = require('../database/models/memory'); // Import the memory usage function
 const { getAllUserMetrics, getGlobalMetrics } = require('../database/models/metrics');
 const { deleteAllUsers, deleteUserData } = require('../database/userDatabase'); // Import deleteAllUsers function
 const supabase = require('../supabaseClient'); // Import Supabase client
 const { getAllComplaints } = require('../database/complaint'); // Import the complaints function
 const { addNotification } = require('../database/notification'); // Import the notification function
 const { getSocketInstance } = require('./socket'); // Import the socket instance
-const { syncMemoryToSupabase } = require('../database/models/supabaseAuthState'); // Import at the top
 const { botInstances } = require('../utils/globalStore'); // At the top
 const { loadSessionFromSupabase } = require('../database/models/supabaseAuthState');
 const { startNewSession } = require('../users/userSession');
@@ -33,24 +32,35 @@ router.post('/login', (req, res) => {
     return res.status(401).json({ success: false, message: 'Invalid credentials' });
 });
 
+// Remove RAM/session memory usage from all responses
+
 router.get('/users', async (req, res) => {
     try {
-        const users = listSessionsFromMemory();
-        // Group by authId
+        // Fetch all users from Supabase
+        const { data: users, error: usersError } = await supabase
+            .from('users')
+            .select('user_id, auth_id, max_ram, max_rom, status');
+
+        if (usersError) {
+            return res.status(500).json({ success: false, message: 'Failed to fetch users', error: usersError.message });
+        }
+
+        // Group users by authId
         const usersByAuth = {};
         users.forEach(user => {
-            if (!usersByAuth[user.authId]) usersByAuth[user.authId] = [];
-            usersByAuth[user.authId].push(user);
+            if (!usersByAuth[user.auth_id]) usersByAuth[user.auth_id] = [];
+            usersByAuth[user.auth_id].push(user);
         });
 
+        // For each group, calculate ROM (media only)
         const result = Object.entries(usersByAuth).map(([authId, bots]) => {
-            const rom = getUserTotalROM(authId);
+            // Only calculate ROM (media), not RAM/session
+            const rom = getUserTotalROM(authId); // This should only sum media files now
             return {
                 authId,
                 bots: bots.map(bot => ({
-                    phoneNumber: bot.phoneNumber,
-                    ram: getSessionMemoryUsage(bot.phoneNumber),
-                    status: bot.active ? 'Active' : 'Inactive'
+                    phoneNumber: bot.user_id,
+                    status: bot.status || 'Inactive'
                 })),
                 rom: `${rom} MB`
             };
@@ -68,9 +78,8 @@ router.get('/admin/bots', (req, res) => {
         phoneNumber: bot.phoneNumber || 'N/A',
         authId: bot.authId || 'N/A',
         status: bot.status || (bot.sock?.ws?.readyState === 1 ? 'Active' : 'Inactive'),
-        ram: getSessionMemoryUsage(bot.phoneNumber) || 0,
+        // REMOVE ram and memoryUsage from response
         rom: getUserTotalROM(bot.authId) || 0,
-        memoryUsage: getSessionMemoryUsage(bot.phoneNumber) || 0,
         uptime: getUptime(bot.phoneNumber) || 'N/A',
         lastActive: getLastActive(bot.phoneNumber) || 'N/A',
         version: bot.version || getVersion(),
@@ -133,16 +142,16 @@ router.post('/restart-bot/:phoneNumber', async (req, res) => {
 });
 
 // Route to get memory usage for all sessions
-router.get('/users/memory-usage', (req, res) => {
-    try {
-        const memoryUsage = getAllSessionsMemoryUsage();
-        console.log('Memory usage data:', memoryUsage); // Debug log
-        res.json({ success: true, memoryUsage });
-    } catch (error) {
-        console.error('Error fetching memory usage:', error.message);
-        res.status(500).json({ success: false, message: 'Failed to fetch memory usage', error: error.message });
-    }
-});
+// router.get('/users/memory-usage', (req, res) => {
+//     try {
+//         const memoryUsage = getAllSessionsMemoryUsage();
+//         console.log('Memory usage data:', memoryUsage); // Debug log
+//         res.json({ success: true, memoryUsage });
+//     } catch (error) {
+//         console.error('Error fetching memory usage:', error.message);
+//         res.status(500).json({ success: false, message: 'Failed to fetch memory usage', error: error.message });
+//     }
+// });
 
 router.post('/stop-bot/:phoneNumber', async (req, res) => {
     const { phoneNumber } = req.params;
@@ -219,8 +228,7 @@ router.put('/users/:phoneNumber/memory-limits', async (req, res) => {
 
         if (fetchError) throw new Error(fetchError.message);
 
-        // Get current RAM and ROM usage
-        const ram = getSessionMemoryUsage(phoneNumber);
+        // Only calculate ROM (media), not RAM/session
         const rom = updatedUser.auth_id ? getUserTotalROM(updatedUser.auth_id) : null;
 
         res.json({
@@ -229,9 +237,7 @@ router.put('/users/:phoneNumber/memory-limits', async (req, res) => {
                 phoneNumber: updatedUser.user_id,
                 max_ram: updatedUser.max_ram,
                 max_rom: updatedUser.max_rom,
-                ram,
-                rom: rom !== null ? `${rom} MB` : 'N/A',
-                memory_usage: ram // You can also use ram here for "Memory Usage"
+                rom: rom !== null ? `${rom} MB` : 'N/A'
             }
         });
     } catch (error) {
@@ -399,13 +405,14 @@ router.delete('/delete-user', async (req, res) => {
 
 router.get('/all-bots', async (req, res) => {
     try {
-        const bots = listSessionsFromMemory(); // Fetch all bots from memory
-
+       const { data: bots, error } = await supabase
+    .from('users')
+    .select('user_id, auth_id');
         // Group bots by authId to calculate ROM per user
         const botsByAuth = {};
         bots.forEach(bot => {
-            if (!botsByAuth[bot.authId]) botsByAuth[bot.authId] = [];
-            botsByAuth[bot.authId].push(bot);
+            if (!botsByAuth[bot.auth_id]) botsByAuth[bot.auth_id] = [];
+            botsByAuth[bot.auth_id].push(bot);
         });
 
         // Map the bots to include RAM and ROM
@@ -414,10 +421,10 @@ router.get('/all-bots', async (req, res) => {
             const rom = getUserTotalROM(authId);
             userBots.forEach(bot => {
                 botData.push({
-                    authId: bot.authId || 'N/A',
-                    phoneNumber: bot.phoneNumber || 'N/A',
+                    authId: bot.auth_id || 'N/A',
+                    phoneNumber: bot.user_id || 'N/A',
                     status: bot.active ? 'Active' : 'Inactive',
-                    ram: getSessionMemoryUsage(bot.phoneNumber), // RAM per bot
+                    ram: 'N/A ', // RAM is not tracked in this context
                     rom: `${rom} MB` // ROM for all bots of this user
                 });
             });

@@ -3,15 +3,15 @@ if (process.env.NODE_ENV === 'production') {
     console.log = function () {};
 }
 const events = require('events');
-events.EventEmitter.defaultMaxListeners = 70;
-console.log('🔧 Increased default max listeners to 70 for EventEmitter');
+events.EventEmitter.defaultMaxListeners = 0;
+console.log('🔧 Increased default max listeners to unlimited for EventEmitter');
 const express = require('express');
 
 const http = require('http');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const supabase = require('../supabaseClient');
-const { syncMemoryToSupabase, loadAllSessionsFromSupabase } = require('../database/models/supabaseAuthState');
+const { loadAllSessionsFromSupabase } = require('../database/models/supabaseAuthState');
 const { deleteAllUsers } = require('../database/userDatabase');
 
 const { router: adminRoutes } = require('./adminRoutes');
@@ -170,10 +170,49 @@ const createServer = () => {
 });
 
 
-  app.post('/api/admin/reload-sessions', async (req, res) => {
+  const { saveSessionToSQLite } = require('../database/models/sqliteAuthState');
+  const { loadSessionFromSupabase } = require('../database/models/supabaseAuthState');
+
+app.post('/api/admin/reload-sessions', async (req, res) => {
   try {
-    await loadAllSessionsFromSupabase();
-    res.json({ success: true, message: 'Sessions reloaded from Supabase.' });
+    const SERVER_ID = process.env.SERVER_ID;
+    // 1. Fetch all sessions assigned to this server
+    const { data: sessions, error } = await supabase
+      .from('sessions')
+      .select('phoneNumber, authId')
+      .eq('server_id', SERVER_ID);
+
+    if (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+
+    const { startNewSession } = require('../users/userSession');
+    const io = getSocketInstance();
+    let started = 0, skipped = 0;
+
+    for (const session of sessions || []) {
+      const { botInstances } = require('../utils/globalStore');
+      if (botInstances[session.phoneNumber]) {
+        skipped++;
+        continue;
+      }
+      try {
+        // Load session data from Supabase and save to SQLite before starting
+        const sessionData = await loadSessionFromSupabase(session.phoneNumber);
+        if (sessionData && sessionData.creds && sessionData.keys) {
+          saveSessionToSQLite(session.phoneNumber, sessionData.creds, sessionData.keys, session.authId);
+        }
+        await startNewSession(session.phoneNumber, io, session.authId);
+        started++;
+      } catch (err) {
+        console.error(`❌ Failed to start session for ${session.phoneNumber}:`, err.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Sessions reloaded from Supabase. Started: ${started}, Skipped (already running): ${skipped}`,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -185,36 +224,36 @@ const createServer = () => {
   });
 };
 
-// Background tasks
-loadAllSessionsFromSupabase();
-setInterval(() => syncMemoryToSupabase(), 2 * 60 * 60 * 1000);
+
+const { syncSQLiteToSupabase, deleteAllSessionsFromSQLite, cleanupOrphanedSessionsInSQLite } = require('../database/models/sqliteAuthState');
 
 // Graceful shutdown for all signals
-const gracefulShutdown = async (signal) => {
-  try {
-    console.log(`\n🔄 [${signal}] Syncing memory to Supabase before shutdown...`);
-    if (server) {
-      server.close(() => {
-        console.log('🛑 HTTP server closed.');
-      });
-    }
-    const timeout = setTimeout(() => {
-      console.error('❌ Shutdown timed out. Forcing exit.');
-      process.exit(1);
-    }, 3000); // 3 seconds, adjust as needed
+function gracefulShutdown() {
+    console.log('🛑 Shutting down, syncing SQLite sessions to Supabase...');
+    syncSQLiteToSupabase()
+        .then(() => {
+            deleteAllSessionsFromSQLite();
+            console.log('✅ All sessions synced and deleted from SQLite. Exiting.');
+            process.exit(0);
+        })
+        .catch((e) => {
+            console.error('❌ Sync on shutdown failed:', e);
+            process.exit(1);
+        });
+}
 
-    await syncMemoryToSupabase();
-    clearTimeout(timeout);
-    console.log('✅ Memory synced to Supabase. Exiting.');
-    process.exit(0);
-  } catch (err) {
-    console.error('❌ Error syncing memory to Supabase:', err);
-    process.exit(1);
-  }
-};
+['SIGINT', 'SIGTERM', 'SIGQUIT'].forEach(signal => {
+    process.on(signal, gracefulShutdown);
+});
+process.on('exit', gracefulShutdown);
 
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('beforeExit', () => gracefulShutdown('beforeExit'));
+// Cleanup orphaned sessions on startup
+(async () => {
+    await cleanupOrphanedSessionsInSQLite();
+    console.log('✅ Orphaned sessions cleanup completed.');
+})();
+
+// Optionally, run periodically:
+setInterval(cleanupOrphanedSessionsInSQLite, 10 * 60 * 1000); // every 10 minutes
 
 module.exports = { createServer };

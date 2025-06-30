@@ -276,11 +276,11 @@ return;
 // });
 
 
-// robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\VPS\M-BOT" /E /XD public /XF .env
-// robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\kali share railway\M-BOT" /E /XD public /XF .env
-// robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\kali share fly.io\M-BOT" /E /XD public /XF .env
-// robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\kali share render\M-BOT" /E /XD public /XF .env
-// robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\ORACLE\M-BOT" /E /XD public
+// robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\VPS\M-BOT" /E /XD public node_modules /XF .env package-lock.json
+// robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\kali share railway\M-BOT" /E /XD public node_modules /XF .env package-lock.json
+// robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\kali share fly.io\M-BOT" /E /XD public node_modules /XF .env package-lock.json
+// robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\kali share render\M-BOT" /E /XD public node_modules /XF .env package-lock.json
+// robocopy "E:\Bot development\kali share dev\M-BOT" "E:\Bot development\ORACLE\M-BOT" /E /XD public node_modules /XF .env package-lock.json
 
 
 
@@ -697,3 +697,138 @@ return;
 
 // but do i need temp file 
 // i dont want temp filecane we create new file
+
+
+
+// let keep this is for next update 
+// i want to make sure it realy work well
+
+// const path = require('path');
+// const Database = require('better-sqlite3');
+// const LRU = require('lru-cache');
+// const { initAuthCreds, makeCacheableSignalKeyStore, BufferJSON } = require('@whiskeysockets/baileys');
+// const { saveSessionToSupabase } = require('./supabaseAuthState');
+
+// const dbPath = path.join(__dirname, '../../sessions.sqlite');
+// const db = new Database(dbPath);
+
+// db.exec(`
+//   CREATE TABLE IF NOT EXISTS sessions (
+//     phoneNumber TEXT PRIMARY KEY,
+//     creds TEXT NOT NULL,
+//     keys TEXT NOT NULL,
+//     authId TEXT,
+//     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+//   );
+// `);
+
+// const memoryCache = new LRU({
+//   max: 100,
+//   ttl: 1000 * 60 * 30
+// });
+
+// function saveSession(phoneNumber, creds, keys, authId) {
+//   const serializedCreds = JSON.stringify(creds, BufferJSON.replacer);
+//   const serializedKeys = {};
+//   for (const category in keys) {
+//     serializedKeys[category] = {};
+//     for (const id in keys[category]) {
+//       serializedKeys[category][id] = JSON.stringify(keys[category][id], BufferJSON.replacer);
+//     }
+//   }
+//   const stmt = db.prepare(`
+//     INSERT INTO sessions (phoneNumber, creds, keys, authId, updated_at)
+//     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+//     ON CONFLICT(phoneNumber) DO UPDATE SET
+//       creds = excluded.creds,
+//       keys = excluded.keys,
+//       authId = excluded.authId,
+//       updated_at = CURRENT_TIMESTAMP
+//   `);
+//   stmt.run(phoneNumber, serializedCreds, JSON.stringify(serializedKeys), authId);
+//   memoryCache.set(phoneNumber, { creds, keys, authId });
+// }
+
+// function loadSession(phoneNumber) {
+//   if (memoryCache.has(phoneNumber)) {
+//     return memoryCache.get(phoneNumber);
+//   }
+//   const stmt = db.prepare(`SELECT creds, keys, authId FROM sessions WHERE phoneNumber = ?`);
+//   const row = stmt.get(phoneNumber);
+//   if (!row) return null;
+//   const creds = JSON.parse(row.creds, BufferJSON.reviver);
+//   const rawKeys = JSON.parse(row.keys);
+//   const keys = {};
+//   for (const category in rawKeys) {
+//     keys[category] = {};
+//     for (const id in rawKeys[category]) {
+//       keys[category][id] = JSON.parse(rawKeys[category][id], BufferJSON.reviver);
+//     }
+//   }
+//   const session = { creds, keys, authId: row.authId };
+//   memoryCache.set(phoneNumber, session);
+//   return session;
+// }
+
+// async function useHybridAuthState(phoneNumber, authId) {
+//   let session = loadSession(phoneNumber);
+//   if (!session) {
+//     session = { creds: initAuthCreds(), keys: {}, authId };
+//   } else {
+//     session.authId = authId;
+//   }
+//   const wrappedKeys = makeCacheableSignalKeyStore({
+//     get: async (type, ids) => {
+//       const result = {};
+//       if (session.keys[type]) {
+//         for (const id of ids) {
+//           if (session.keys[type][id]) {
+//             result[id] = session.keys[type][id];
+//           }
+//         }
+//       }
+//       return result;
+//     },
+//     set: async (data) => {
+//       for (const category in data) {
+//         if (!session.keys[category]) session.keys[category] = {};
+//         for (const id in data[category]) {
+//           session.keys[category][id] = data[category][id];
+//         }
+//       }
+//       saveSession(phoneNumber, session.creds, session.keys, session.authId);
+//     }
+//   });
+//   return {
+//     state: {
+//       creds: session.creds,
+//       keys: wrappedKeys
+//     },
+//     saveCreds: async () => {
+//       saveSession(phoneNumber, session.creds, session.keys, session.authId);
+//     }
+//   };
+// }
+
+// async function syncSQLiteToSupabase() {
+//   const stmt = db.prepare(`SELECT phoneNumber FROM sessions`);
+//   const sessions = stmt.all();
+//   for (const { phoneNumber } of sessions) {
+//     const session = loadSession(phoneNumber);
+//     if (session) {
+//       await saveSessionToSupabase(phoneNumber, {
+//         creds: session.creds,
+//         keys: session.keys,
+//         authId: session.authId,
+//       });
+//     }
+//   }
+//   console.log(`✅ Synced ${sessions.length} sessions to Supabase`);
+// }
+
+// module.exports = {
+//   useHybridAuthState,
+//   saveSession,
+//   loadSession,
+//   syncSQLiteToSupabase
+// };

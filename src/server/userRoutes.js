@@ -10,7 +10,7 @@ const { getAllUserMetrics, getMetricsForAuthId } = require('../database/models/m
 const { getNotificationHistory, addNotification, getUserSummary, addUserData, addBotData, userData, getAnalyticsData, getActivityLog, } = require('./info'); // Import userData
 const { addComplaint } = require('../database/complaint'); // Import complaint functions
 const { getNotifications } = require('../database/notification'); // Import notification functions
-const { useHybridAuthState } = require('../database/hybridAuthState');
+const {useSupabaseAuthState } = require('../database/hybridAuthState');
 const QRCode = require('qrcode');
 const { loadSessionFromSupabase } = require('../database/models/supabaseAuthState');
 const { startNewSession } = require('../users/userSession');
@@ -130,6 +130,7 @@ router.get('/activity-log', (req, res) => {
 
 router.get('/bot-info', async (req, res) => {
     const { authId } = req.query;
+    const { botInstances } = require('../utils/globalStore');
 
     console.log(`📥 Received request to fetch bot info for authId: ${authId}`); // Debug log
 
@@ -140,7 +141,6 @@ router.get('/bot-info', async (req, res) => {
 
     try {
         // Step 1: Check if the user exists in the user_auth table
-        console.log('🔍 Checking if user exists in user_auth table...');
         const { data: userAuth, error: userAuthError } = await supabase
             .from('user_auth')
             .select('*')
@@ -157,10 +157,9 @@ router.get('/bot-info', async (req, res) => {
         }
 
         // Step 2: Fetch all phone numbers (user_id) associated with the authId from the users table
-        console.log('🔍 Fetching phone numbers associated with authId from users table...');
         const { data: users, error: usersError } = await supabase
             .from('users')
-            .select('user_id') // Only fetch the user_id (phone numbers)
+            .select('user_id')
             .eq('auth_id', authId);
 
         if (usersError) {
@@ -169,32 +168,30 @@ router.get('/bot-info', async (req, res) => {
         }
 
         if (!users || users.length === 0) {
-            console.log('ℹ️ No phone numbers found for this authId.');
             return res.status(200).json({ success: true, message: 'No bots registered yet.', bots: [] });
         }
 
-        const phoneNumbers = users.map((user) => user.user_id); // Extract phone numbers
+        const phoneNumbers = users.map((user) => user.user_id);
 
-        // Step 3: Fetch memory usage and status for the user's sessions
-        // Step 3: Fetch memory usage, status, uptime, last active, and version for the user's sessions
-        console.log('🔍 Fetching memory usage, uptime, and status for user sessions...');
-       const bots = listSessionsFromMemory().filter((bot) => phoneNumbers.includes(bot.phoneNumber));
+        // Step 3: Build bot info using Supabase and in-memory botInstances for status
         const totalROM = getUserTotalROM(authId); // Calculate ROM for this user
 
-        const botsWithDetails = bots.map((bot) => ({
-            phoneNumber: bot.phoneNumber,
-            authId: bot.authId,
-            status: bot.active ? 'Active' : 'Inactive',
-            ram: getSessionMemoryUsage(bot.phoneNumber), // RAM per bot
-            rom: `${totalROM} MB`, // ROM for all bots of this user
-            uptime: getUptime(bot.phoneNumber),
-            lastActive: getLastActive(bot.phoneNumber),
-            version: bot.version || getVersion(),
-        }));
+        const botsWithDetails = phoneNumbers.map((phoneNumber) => {
+            const instance = botInstances[phoneNumber];
+            const isActive = instance && instance.sock && instance.sock.ws && instance.sock.ws.readyState === 1;
+            return {
+                phoneNumber,
+                authId,
+                status: isActive ? 'Active' : 'Inactive',
+                rom: `${totalROM} MB`, // ROM for all bots of this user
+                uptime: getUptime(phoneNumber),
+                lastActive: getLastActive(phoneNumber),
+                version: getVersion(),
+            };
+        });
 
-        addBotData(authId, botsWithDetails); // Store bot data in memory
+        addBotData(authId, botsWithDetails); // Store bot data in memory if needed
         console.log(`📊 Fetched ${botsWithDetails.length} bot(s) for authId: ${authId}`); // Debug log
-
 
         res.status(200).json({ success: true, bots: botsWithDetails });
     } catch (error) {
@@ -204,24 +201,17 @@ router.get('/bot-info', async (req, res) => {
 });
 // Restart a bot for the logged-in user
 router.post('/restart-bot/:phoneNumber', async (req, res) => {
-    console.log('📥 Received request to restart bot:', req.params, req.body); 
     const { phoneNumber } = req.params;
     const { authId } = req.body;
 
-    console.log(`📥 Restarting bot for phoneNumber: ${phoneNumber}, authId: ${authId}`); // Debug log
-
     try {
-      const bots = listSessionsFromMemory().filter(
-        (bot) => String(bot.authId) === String(authId) && String(bot.phoneNumber) === String(phoneNumber)
-        );
-
-        if (!bots || bots.length === 0) {
-            return res.status(404).json({ success: false, message: 'Bot not found for this user.' });
+        // Check session in Supabase
+        const session = await loadSessionFromSupabase(phoneNumber);
+        if (!session || String(session.creds?.authId) !== String(authId)) {
+            return res.status(404).json({ success: false, message: 'Bot/session not found for this user.' });
         }
 
-        console.log(`🔍 Found ${bots.length} bot(s) for phoneNumber: ${phoneNumber}`); // Debug log
-        const success = await restartUserBot(phoneNumber, phoneNumber + '@s.whatsapp.net', authId); // Pass authId
-
+        const success = await restartUserBot(phoneNumber, phoneNumber + '@s.whatsapp.net', authId);
         if (success) {
             res.status(200).json({ success: true, message: `Bot restarted successfully for ${phoneNumber}.` });
         } else {
@@ -232,23 +222,20 @@ router.post('/restart-bot/:phoneNumber', async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to restart bot.', error: error.message });
     }
 });
+
 // Delete a bot for the logged-in user
 router.delete('/delete-bot/:phoneNumber', async (req, res) => {
     const { phoneNumber } = req.params;
     const { authId } = req.body;
 
-    console.log(`📥 Deleting bot for phoneNumber: ${phoneNumber}, authId: ${authId}`); // Debug log
-
     try {
-       const bots = listSessionsFromMemory().filter(
-        (bot) => String(bot.authId) === String(authId) && String(bot.phoneNumber) === String(phoneNumber)
-        );
-        if (!bots || bots.length === 0) {
-            return res.status(404).json({ success: false, message: 'Bot not found for this user.' });
+        // Check session in Supabase
+        const session = await loadSessionFromSupabase(phoneNumber);
+        if (!session || String(session.creds?.authId) !== String(authId)) {
+            return res.status(404).json({ success: false, message: 'Bot/session not found for this user.' });
         }
 
-        await deleteUserData(phoneNumber); // Delete the bot
-        console.log(`✅ Bot deleted for phoneNumber: ${phoneNumber}`);
+        await deleteUserData(phoneNumber);
         res.status(200).json({ success: true, message: `Bot deleted successfully for ${phoneNumber}.` });
     } catch (error) {
         console.error('❌ Error deleting bot:', error.message);
@@ -298,7 +285,7 @@ router.get('/rescan-qr/:phoneNumber', async (req, res) => {
     const { phoneNumber } = req.params;
 
     try {
-        const { state } = await useHybridAuthState(phoneNumber);
+        const { state } = await useSupabaseAuthState(phoneNumber);
 
         // Check if QR is available and is a string
         if (!state.creds.qr || typeof state.creds.qr !== 'string') {

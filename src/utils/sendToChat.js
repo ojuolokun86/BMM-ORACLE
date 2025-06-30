@@ -25,7 +25,7 @@ const sendToChat = async (botInstance, chatId, options = {}) => {
     participant: '0@s.whatsapp.net',
   },
   message: {
-    conversation: 'Your WhatsApp is linked to a device using WhatsApp Web. Tap to learn more.'
+    conversation: 'Powered by BMM.'
   }
 };
 

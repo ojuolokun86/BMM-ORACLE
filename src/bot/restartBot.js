@@ -3,20 +3,21 @@ const { updateUserMetrics } = require('../database/models/metrics');
 
 const sendToChat = require('../utils/sendToChat');
 
+
 const sendRestartMessage = async (sock, phoneNumber, reason = 'generic') => {
-    let msg;
+   let msg;
     switch (reason) {
         case 'new_user':
-            msg = `🎉 *Welcome!*\n\nYour bot is now registered and ready to use.`;
+            msg = `🎉 *Welcome!*\n\nYour bot is now registered and ready to use. Enjoy all features!`;
             break;
         case 'owner_restart':
-            msg = `🔄 *Bot Restarted by Owner*\n\nYour bot session has been restarted by the owner.`;
+            msg = `🔄 *Bot Restarted by Owner*\n\nYour session has been refreshed manually by the owner.`;
             break;
         case 'session_error':
-            msg = `⚠️ *Session Error*\n\nYour bot session was restarted due to a session error.`;
+            msg = `⚠️ *Session Error*\n\nYour session was restarted due to a system issue. Everything is stable now.`;
             break;
         default:
-            msg = `🔄 *Bot Restarted*\n\nYour bot session has been restarted.`;
+            msg = `🔁 *Bot Restarted*\n\nYour bot session has been restarted and is running normally.`;
     }
     let targetJid = phoneNumber;
     if (!targetJid.endsWith('@s.whatsapp.net')) {

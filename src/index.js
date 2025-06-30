@@ -11,6 +11,7 @@ const { platform } = require('os');
 console.log("Starting app...");
 console.log("PORT =", process.env.PORT);
 const { preloadCacheOnStartup,} = require('./database/userDatabase') // Get the user's platform}
+const { syncSQLiteToSupabase, loadAllSessionsToSQLite, cleanupOrphanedSessionsInSQLite } = require('./database/models/sqliteAuthState');
 
 
 
@@ -41,8 +42,8 @@ const retryOperation = async (operation, description, retries = 3) => {
 process.on('unhandledRejection', async (err) => {
     console.error('❌ Unhandled Promise Rejection:', err);
     
-    await healSessionForError(err, 'global trap');
-    console.info('This is an unhandled rejection, attempting to heal session...');
+    // await healSessionForError(err, 'global trap');
+    // console.info('This is an unhandled rejection, attempting to heal session...');
 });
 
 process.on('uncaughtException', async (err) => {
@@ -122,6 +123,7 @@ function extractUserIdFromError(err) {
         // console.log('✅ All caches preloaded from database.');
         // Load existing user sessions
         const sessions = await retryOperation(async () => {
+            await loadAllSessionsToSQLite();
             const loadedSessions = await loadAllSessions(); // Ensure this is awaited
             return loadedSessions;
         }, 'Loading user sessions');

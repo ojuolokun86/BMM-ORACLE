@@ -5,7 +5,7 @@ const { updateUserMetrics } = require('../database/models/metrics'); // Import t
 const { addActivityLog, addAnalyticsData } = require('../server/info'); // Import addActivityLog
 const { getUserCached } = require('../database/userDatabase'); // Import the user database functions
 const { formatResponse } = require('../utils/utils');
-const { useHybridAuthState } = require('../database/hybridAuthState');
+const { useSupabaseAuthState } = require('../database/hybridAuthState');
 const { isCallAllowed } = require('../dnd/dndManager');
 const { handleAntiLink } = require('../message-controller/antilink');
 const { restartUserBot } = require('./restartBot');
@@ -226,12 +226,6 @@ module.exports = async (sock, userId, version) => {
                in ${isGroup ? 'group' : 
                 'DM'}: ${messageContent}`);
 
-                 if (message.messageStubType === 0) {
-                    const deletedBy = message.key.participant || message.key.remoteJid;
-                    console.log('🗑️ Message was deleted by:', deletedBy);
-                    console.log('📄 Deleted messageStubParameters:', message.messageStubParameters);
-                }
-
                 if (isGroup) {
                     try {
                         await handleAntiLink(sock, message, userId, sock);
@@ -335,7 +329,7 @@ sock.ev.on('call', async (callEvent) => {
         }
     }
 });
-const { state, saveCreds } = await useHybridAuthState(userId, authId);
+const { state, saveCreds } = await useSupabaseAuthState(userId, authId);
 sock.ev.on('creds.update', async () => {
     await saveCreds();
     console.log('✅ Session credentials updated and saved.');

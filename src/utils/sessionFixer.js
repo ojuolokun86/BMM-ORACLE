@@ -1,4 +1,4 @@
-const { useHybridAuthState } = require('../database/hybridAuthState');
+
 const { restartUserBot } = require('../bot/restartBot');
 
 async function healAndRestartBot(userId, authId) {
