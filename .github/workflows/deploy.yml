@@ -19,7 +19,7 @@ jobs:
         username: ${{ secrets.VPS_USER }}
         key: ${{ secrets.VPS_PRIVATE_KEY }}
         script: |
-          cd BMM-ORACLE
+          cd ~/BMM-ORACLE
           git pull origin main
           RUN npm install @whiskeysockets/baileys@latest
           npm install
