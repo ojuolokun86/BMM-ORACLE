@@ -1,117 +1,81 @@
-const { getUserStatusSettingsCached, updateUserStatusSettingsCached } = require('../database/userDatabase'); // Import database functions
-const { sendToChat } = require('../utils/messageUtils'); // Import message utility functions
+const { getUserStatusSettingsCached, updateUserStatusSettingsCached, getUserStatusSettings } = require('../database/userDatabase');
+const { sendToChat } = require('../utils/messageUtils');
+
+// A temporary queue to store live statuses if multiple arrive too fast
+const liveStatusQueue = new Map();
 
 /**
- * Handle status updates.
- * @param {object} sock - The WhatsApp socket instance.
- * @param {object} status - The status update object.
- * @param {string} userId - The bot owner's ID.
+ * Handle a single status update: mark as seen + react.
  */
 const handleStatusUpdate = async (sock, status, userId) => {
     try {
-        const { remoteJid } = status.key; // Status poster's ID
-        const settings = await getUserStatusSettingsCached(userId); // Fetch the user's status settings
+        const { remoteJid } = status.key;
+        const settings = await getUserStatusSettingsCached(userId);
+        if (!settings?.status_seen) return;
 
-        if (settings.status_seen) {
-            console.log(`👀 Viewing status from ${remoteJid}...`);
-            await sock.readMessages([status.key]); // Mark the status as seen
+        console.log(`👀 Viewing live status from ${remoteJid}`);
+        await sock.readMessages([status.key]);
+
+        // Ensure participant is set
+        if (!status.key.participant) {
+            status.key.participant = status.key.remoteJid;
         }
 
-        if (settings.status_seen) {
-                console.log(`❤️ Reacting to status from ${remoteJid}...`);
-
-                  // Defensive: Ensure status.key is an object
-            if (typeof status.key !== 'object' || !status.key.id || !status.key.remoteJid) {
-                console.error('❌ Invalid status.key for reaction:', status.key);
-                return;
+        await sock.sendMessage(
+            status.key.remoteJid,
+            {
+                react: {
+                    key: status.key,
+                    text: '❤️',
+                },
+            },
+            {
+                statusJidList: [status.key.participant, sock.user.id],
             }
-                // Ensure participant is set
-                if (!status.key.participant) {
-                    status.key.participant = status.key.remoteJid;
-                }
-                await sock.sendMessage(
-                    status.key.remoteJid,
-                    {
-                        react: {
-                            key: status.key,
-                            text: '❤️', // Emoji reaction
-                        },
-                    },
-                    {
-                        statusJidList: [status.key.participant, sock.user.id],
-                    }
-                );
-            }
+        );
     } catch (error) {
         console.error('❌ Failed to handle status update:', error);
     }
 };
-// await conn.sendMessage(
-//   message.key.remoteJid,
-//   {
-//     react: {
-//       key: message.key,
-//       text: '❤️', // Emoji reaction
-//     },
-//   },
-//   {
-//     statusJidList: [message.key.participant, conn.user.id],
-//   }
-// );
-
 
 /**
- * Handle status commands.
- * @param {object} sock - The WhatsApp socket instance.
- * @param {string} command - The command to execute.
- * @param {string[]} args - The command arguments.
- * @param {string} userId - The bot owner's ID.
- * @param {object} botInstance - The bot instance for the current user.
+ * Queue and batch process multiple live statuses (to avoid dropping).
  */
-const handleStatusCommand = async (sock, command, args, userId, botInstance) => {
-    try {
-        const subCommand = args[0]?.toLowerCase();
-        const userJid = `${userId}@s.whatsapp.net`; // Ensure userId is formatted as a WhatsApp JID
+const handleLiveStatus = (sock, status, userId) => {
+    const queueKey = `${userId}`;
 
-        switch (subCommand) {
-            case 'on':
-                await updateUserStatusSettingsCached(userId, { status_seen: true });
-                await sendToChat(botInstance, userJid, { message: '✅ Status viewing enabled.' });
-                break;
+    if (!liveStatusQueue.has(queueKey)) {
+        liveStatusQueue.set(queueKey, []);
+        // Start batch processor for this user
+        setTimeout(async () => {
+            const statuses = liveStatusQueue.get(queueKey);
+            liveStatusQueue.delete(queueKey);
 
-            case 'off':
-                await updateUserStatusSettingsCached(userId, { status_seen: false });
-                await sendToChat(botInstance, userJid, { message: '✅ Status viewing disabled.' });
-                break;
-
-              default:
-                await sendToChat(botInstance, userJid, { message: '❌ Invalid status command.' });
-        }
-    } catch (error) {
-        console.error('❌ Failed to handle status command:', error);
+            for (const s of statuses) {
+                await handleStatusUpdate(sock, s, userId);
+            }
+        }, 1000); // Process every 1s
     }
+
+    liveStatusQueue.get(queueKey).push(status);
 };
 
-
 /**
- * View all unseen statuses when the bot comes online.
- * @param {object} sock - The WhatsApp socket instance.
- * @param {string} userId - The bot owner's ID.
+ * React to all unseen statuses when bot starts or reconnects.
  */
 const viewUnseenStatuses = async (sock, userId) => {
     try {
-        const settings = await getUserStatusSettings(userId); // Fetch user's status settings
-
-        if (!settings.status_seen) {
-            console.log('ℹ️ Status viewing is disabled. Skipping unseen statuses.');
+        const settings = await getUserStatusSettings(userId);
+        if (!settings?.status_seen) {
+            console.log('ℹ️ Status viewing is disabled.');
             return;
         }
 
-        console.log('🔍 Fetching all statuses...');
-        const { statuses } = await sock.fetchStatus(); // Correctly destructure
+        console.log('🔍 Fetching all unseen statuses...');
+        const { statuses } = await sock.fetchStatus();
 
-        if (!statuses || statuses.length === 0) {
-            console.log('ℹ️ No statuses found.');
+        if (!statuses || Object.keys(statuses).length === 0) {
+            console.log('ℹ️ No unseen statuses found.');
             return;
         }
 
@@ -119,19 +83,57 @@ const viewUnseenStatuses = async (sock, userId) => {
             for (const s of status) {
                 const key = {
                     remoteJid: jid,
-                    id: s.id,           // Each status ID
-                    participant: jid    // Typically the status poster
+                    id: s.id,
+                    participant: jid
                 };
-                console.log(`👀 Viewing status from ${jid}...`);
-                await sock.readMessages([key]); // Mark as seen
+                console.log(`👀 Viewing unseen status from ${jid}`);
+                await sock.readMessages([key]);
+                await sock.sendMessage(
+                    jid,
+                    {
+                        react: {
+                            key,
+                            text: '❤️',
+                        },
+                    },
+                    {
+                        statusJidList: [jid, sock.user.id],
+                    }
+                );
             }
         }
 
-        console.log('✅ All statuses have been viewed.');
+        console.log('✅ Finished viewing unseen statuses.');
     } catch (error) {
-        console.error('❌ Failed to view statuses:', error);
+        console.error('❌ Failed to view unseen statuses:', error);
     }
 };
 
+/**
+ * Toggle status viewer from user DM commands.
+ */
+const handleStatusCommand = async (sock, command, args, userId, botInstance) => {
+    try {
+        const sub = args[0]?.toLowerCase();
+        const jid = `${userId}@s.whatsapp.net`;
 
-module.exports = { handleStatusUpdate, handleStatusCommand, viewUnseenStatuses };
+        if (sub === 'on') {
+            await updateUserStatusSettingsCached(userId, { status_seen: true });
+            await sendToChat(botInstance, jid, { message: '✅ Status viewing enabled.' });
+        } else if (sub === 'off') {
+            await updateUserStatusSettingsCached(userId, { status_seen: false });
+            await sendToChat(botInstance, jid, { message: '✅ Status viewing disabled.' });
+        } else {
+            await sendToChat(botInstance, jid, { message: '❌ Invalid status command.' });
+        }
+    } catch (error) {
+        console.error('❌ Failed to handle status command:', error);
+    }
+};
+
+module.exports = {
+    handleStatusUpdate,
+    handleLiveStatus,
+    viewUnseenStatuses,
+    handleStatusCommand
+};

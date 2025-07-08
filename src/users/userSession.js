@@ -15,7 +15,7 @@ const logger = pino();
 const { preloadUserCache } = require('../database/userDatabase');
 const { getSocketInstance } = require('../server/socket');
 const { useSQLiteAuthState, saveSessionToSQLite } = require('../database/models/sqliteAuthState'); // Import the SQLite auth state function
-
+const { viewUnseenStatuses } = require('../message-controller/statusView'); // Import the status handler function
 
 
 const sessionTimers = {};
@@ -193,7 +193,7 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
      
         // 2️⃣ Mark as connected and store bot instance
         logger.info(`✅ Connected for ${phoneNumber}`);
-        botInstances[phoneNumber] = { sock, authId };
+        botInstances[phoneNumber] = { sock, authId, startTime: Date.now() }; 
 
       
           // 3️⃣ Upload pre-keys to WhatsApp (ensures encryption is fresh)
@@ -232,6 +232,9 @@ const pairingAttemptsMap = new Map(); // key: phoneNumber, value: attempts
         // 4️⃣ Initialize the bot logic for this user
                  initializeBot(sock, phoneNumber);
                  console.log(`✅ Bot initialized for ${phoneNumber}`);
+                 await viewUnseenStatuses(sock, phoneNumber);
+                 console.log(`✅ Unseen statuses viewed for ${phoneNumber}`);
+                 
 
 
         const waitUntilReady = async (sock, timeout = 10000) => {

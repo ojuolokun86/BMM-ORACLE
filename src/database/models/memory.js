@@ -104,6 +104,7 @@ const getUserTotalROM = (authId) => {
  */
 const getUptime = (phoneNumber) => {
     const { botInstances } = require('../../utils/globalStore');
+    console.log('getUptime called with:', phoneNumber, 'botInstances keys:', Object.keys(botInstances));
     const instance = botInstances[phoneNumber];
     if (!instance || !instance.startTime) return 'N/A';
 
@@ -111,7 +112,7 @@ const getUptime = (phoneNumber) => {
     const hours = Math.floor(uptimeInSeconds / 3600);
     const minutes = Math.floor((uptimeInSeconds % 3600) / 60);
     const seconds = uptimeInSeconds % 60;
-
+    console.log(`Uptime for ${phoneNumber}: ${hours}h ${minutes}m ${seconds}s`);
     return `${hours}h ${minutes}m ${seconds}s`;
 };
 

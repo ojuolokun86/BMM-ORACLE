@@ -80,7 +80,7 @@ const sendToChat = async (botInstance, chatId, options = {}) => {
                 body: 'Powering smart automation.',
                 mediaType: 1,
                 showAdAttribution: true,
-                renderLargerThumbnail: true,
+                renderLargerThumbnail: false,
                 thumbnailUrl: 'https://files.catbox.moe/ow2buv.jpg',
                 thumbnail: imageBuffer // optional but improves consistency
             }

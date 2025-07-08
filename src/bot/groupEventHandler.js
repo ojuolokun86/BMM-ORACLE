@@ -9,7 +9,6 @@ module.exports = async (sock, groupId, userId) => {
     try {
         // Update the group mode when a user joins a new group
         await updateGroupModeOnAction(userId, groupId);
-        console.log(`✅ Group mode for user ${userId} in group ${groupId} updated to "me".`);
     } catch (error) {
         console.error(`❌ Failed to update group mode for user ${userId} in group ${groupId}:`, error);
     }

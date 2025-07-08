@@ -28,7 +28,7 @@ async function handlePing(sock, botInstance, remoteJid, message, userId, authId)
 
         const end = Date.now();
         const responseTime = end - start;
-
+        const phoneNumber = sock.user?.id?.split(':')[0]?.split('@')[0];
         // Get uptime for this user's bot session
         const uptimeRaw = getUptime(userId);
         let uptimeFormatted = uptimeRaw;

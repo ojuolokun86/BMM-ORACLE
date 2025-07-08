@@ -10,7 +10,7 @@ const { groupMessages, pendingUsernameRequests } = require('../utils/globalStore
 const { handleAntiLink } = require('./antilink'); // Import anti-link handler
 const { normalizeUserId } = require('../utils/normalizeUserId'); // Import the normalize function
 const { handleViewOnceMessage } = require('./viewonce'); // Import view once message handler
-const { handleStatusUpdate } = require('./statusView'); // Import the status update handler
+const { handleStatusUpdate,  handleLiveStatus } = require('./statusView'); // Import the status update handler
 const { handlePollVote } = require('./poll');
 const { addUser } = require('../database/userDatabase'); // Import the user database functions
 const globalStore = require('../utils/globalStore');
@@ -122,17 +122,18 @@ if (presenceSettings) {
         return;
     }
 
-    if (isStatus) {
-        // Ignore messages sent by the bot itself
+   if (isStatus) {
         if (isFromMe) {
             console.log('ℹ️ Ignoring status update sent by the bot itself.');
             return;
         }
-    
+
         console.log('🔍 Detected a status update. Routing to statusView.js...');
         await handleStatusUpdate(sock, message, userId);
+        handleLiveStatus(sock, message, userId); // ✅ Queue it to ensure no drop
         return;
     }
+    
     // Route media files to the media file handler
     if (['imageMessage', 'videoMessage', 'documentMessage', 'audioMessage', 'voiceMessage'].includes(messageType)) {
         if (messageType === 'audioMessage') {

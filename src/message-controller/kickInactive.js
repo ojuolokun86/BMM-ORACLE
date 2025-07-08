@@ -58,7 +58,10 @@ async function confirmKickInactive(remoteJid) {
 
     const { sock, botInstance, inactiveMembers, intervalMs } = state;
 
-    await sendToChat(botInstance, remoteJid, { message: '✅ Confirmation received. Kicking all inactive members now...' });
+    await sendToChat(botInstance, remoteJid, {
+         message: '✅ Confirmation received. Kicking all inactive members now...'
+        
+        });
 
     for (const member of inactiveMembers) {
         if (groupKickInactiveState[remoteJid]?.cancel) {

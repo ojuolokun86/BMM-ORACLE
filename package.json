@@ -33,12 +33,14 @@
     "tmp": "^0.2.3"
   },
   "scripts": {
-    "start": "node --max-old-space-size=4096 src/index.js"
+    "start": "node --max-old-space-size=4096 src/index.js",
+     "dev": "nodemon src/index.js"
   },
   "engines": {
     "node": "21.x"
   },
   "devDependencies": {
-    "pino-pretty": "^13.0.0"
+    "pino-pretty": "^13.0.0",
+    "nodemon": "^3.1.10"
   }
 }

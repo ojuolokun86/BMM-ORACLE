@@ -2,12 +2,11 @@ const settings = require('./settings');
 const sendToChat = require('./sendToChat');
 
 const getMainMenu = (prefix = '.', ownerName = 'Unknow') => `
-╔═══════════════════╗
-║ 🤖 *${settings.botName || 'Techitoon AI'}*       
-║ 📦 Version: *${settings.version || '1.0.0'}*      
-║ 👤 Owner: *${ownerName || 'Unknown'}*             
-║ 👨‍💻 Developed by *Tolu*                 
-╚═══════════════════╝
+
+🤖 *${settings.botName || 'Techitoon AI'}*
+📦 Version: *${settings.version || '1.0.0'}*
+👤 Owner: *${ownerName || 'Unknown'}*
+👨‍💻 Developed by *Tolu*
 
 *Available Commands:*
 

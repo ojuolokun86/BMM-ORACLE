@@ -45,7 +45,8 @@ const handleCommand = async (sock, message, userId, authId, messageContent, subs
         console.log(`🔍 Bot Owner IDs: ${botOwnerIds}`);
 
         // Retrieve the correct bot instance
-        const botInstance = botInstances[userId];
+        const botInstanceObj = botInstances[userId];
+        const botInstance = botInstanceObj && botInstanceObj.sock;
 
         if (!botInstance || typeof botInstance.sendMessage !== 'function') {
             console.error(`❌ Invalid botInstance for user: ${userId}. Expected a valid WhatsApp socket instance.`);

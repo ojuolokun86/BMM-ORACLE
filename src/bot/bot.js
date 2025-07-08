@@ -196,7 +196,7 @@ module.exports = async (sock, userId, version) => {
         return;
     }
 
-    botInstances[userId] = sock; // Store the socket in the global botInstances object
+    botInstances[userId] = { sock, authId: sock.authId, startTime: Date.now() }; // Store the socket in the global botInstances object
     if (!botInstances[userId]) {
         console.error(`❌ Invalid botInstance for user: ${userId}. Expected a valid WhatsApp socket instance.`);
         return;
@@ -238,28 +238,13 @@ module.exports = async (sock, userId, version) => {
         // Add the message to the user's queue
       const queueKey = isGroup ? remoteJid : userId;
       addToQueue(queueKey, async () => {
-    
-    // 1. Presence update (available)
-    const t1 = Date.now();
-    try {
-        await sock.sendPresenceUpdate('available', remoteJid);
-    } catch (err) {}
-
-    // 3. Handle message
+   // 3. Handle message
     const t3 = Date.now();
     try {
         await handleMessage(sock, message, userId, authId);
     } catch (err) {
         console.error(`[${new Date().toISOString()}] ❌ handleMessage error:`, err);
     } finally {
-    // 4. Presence update (unavailable) - always runs
-    const t4 = Date.now();
-    try {
-        // Wait 2 seconds before setting unavailable
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        await sock.sendPresenceUpdate('unavailable', remoteJid);
-        console.log(`🚀presence unavailable sent for ${userId}`);
-    } catch (err) {}
 
     const endTime = Date.now();
     addActivityLog(authId, {
